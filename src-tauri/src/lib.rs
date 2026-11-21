@@ -30,6 +30,7 @@ mod notes;
 mod openai_compat;
 mod phone_link;
 mod pipe;
+mod power;
 mod platform;
 #[cfg(target_os = "linux")]
 mod portal;
@@ -1103,6 +1104,7 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
             secrets::warm_up();
+            power::watch(handle.clone());
             app.manage(phone_link::PhoneLink::new(handle.clone()));
             tray::build(&handle)?;
             // Before the island: see create_settings_window.

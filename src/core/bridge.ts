@@ -768,3 +768,12 @@ export async function onEvent<T>(name: string, handler: (payload: T) => void) {
   if (!IS_TAURI) return () => {};
   return listen<T>(name, (e) => handler(e.payload));
 }
+
+/**
+ * The PC woke from sleep or hibernation (src-tauri/src/power.rs): the page's
+ * graphics are often broken then, so it loads again. What it shows comes back
+ * from the settings and the next hook.
+ */
+export function reloadOnResume() {
+  void onEvent("system-resumed", () => window.location.reload());
+}

@@ -6,7 +6,7 @@
 // window lets clicks through; it draws only while something moves.
 
 import "./pill.css";
-import { Bridge, onEvent } from "../core/bridge";
+import { Bridge, onEvent, reloadOnResume } from "../core/bridge";
 import { FlowBridge, clock, type PillState } from "../core/flow";
 import type { Settings } from "../core/state";
 import { BotEngine, hexToRGB } from "../mochi/engine";
@@ -513,6 +513,7 @@ async function say(s: Say) {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function main() {
+  reloadOnResume();
   const boot = await Bridge.boot();
   setLanguage(resolveLanguage(boot?.settings.language, systemLanguages()));
   const status = await FlowBridge.status();

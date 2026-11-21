@@ -7,7 +7,7 @@
 // like the Mac, and a few frames a second asleep — with no cursor polling at
 // all while he sleeps.
 
-import { Bridge, emitToWindow, onEvent, type DesktopMode } from "../core/bridge";
+import { Bridge, emitToWindow, onEvent, reloadOnResume, type DesktopMode } from "../core/bridge";
 import type { BotEmoteName } from "../core/layout";
 import { Sound } from "../core/sound";
 import { BotEngine } from "../mochi/engine";
@@ -78,6 +78,7 @@ class DesktopMochi {
     const info = await Bridge.desktopInfo();
     if (info) this.mode = info.mode;
 
+    reloadOnResume();
     await onEvent<DesktopSnapshot>(DESKTOP_EVENTS.state, (s) => this.onSnapshot(s));
     await onEvent<{ emote: BotEmoteName; duration: number }>(DESKTOP_EVENTS.emote, (e) => {
       this.lastAgentActive = performance.now();
