@@ -147,6 +147,46 @@
       ]
     },
     {
+      "version": "0.5.10",
+      "items": [
+        {
+          "icon": "sparkles",
+          "title": {
+            "en": "Dropped files stay put",
+            "zh-Hans": "拖入的文件不再丢失",
+            "hi": "डाली गई फ़ाइल बनी रहती है",
+            "es": "Los archivos soltados se quedan",
+            "ar": "الملفات المُسقَطة تبقى",
+            "fr": "Les fichiers déposés restent",
+            "bn": "ফেলা ফাইল থেকে যায়",
+            "pt-BR": "Arquivos soltos ficam",
+            "ru": "Брошенные файлы остаются",
+            "id": "File yang dijatuhkan tetap ada",
+            "de": "Abgelegte Dateien bleiben",
+            "tr": "Bırakılan dosyalar kalır",
+            "ko": "놓은 파일이 그대로 남아요",
+            "ja": "ドロップしたファイルが残る"
+          },
+          "detail": {
+            "en": "Dragging a file onto the island no longer folds it; it waits for you to choose what to do.",
+            "zh-Hans": "把文件拖到灵动岛上时，它不会再自动收起，会等你选择下一步。",
+            "hi": "फ़ाइल को आइलैंड पर खींचने पर वह अब अपने-आप बंद नहीं होता; आपके चुनने तक रुका रहता है।",
+            "es": "Al arrastrar un archivo a la isla, ya no se pliega: espera a que elijas qué hacer.",
+            "ar": "عند سحب ملف إلى الجزيرة لم تعد تنطوي؛ تنتظر حتى تختار ما تفعله.",
+            "fr": "Quand on dépose un fichier sur l'île, elle ne se replie plus : elle attend que tu choisisses.",
+            "bn": "আইল্যান্ডে ফাইল টেনে আনলে সেটি আর বন্ধ হয় না; আপনি কী করবেন বেছে নেওয়া পর্যন্ত অপেক্ষা করে।",
+            "pt-BR": "Ao arrastar um arquivo para a ilha, ela não se fecha mais: espera você escolher o que fazer.",
+            "ru": "Когда файл брошен на остров, он больше не сворачивается и ждёт, пока вы выберете действие.",
+            "id": "Saat file diseret ke pulau, pulau tidak lagi menutup; ia menunggu Anda memilih tindakan.",
+            "de": "Wird eine Datei auf die Insel gezogen, klappt sie nicht mehr ein, sondern wartet auf deine Wahl.",
+            "tr": "Bir dosyayı adaya sürüklediğinde ada artık kapanmaz; ne yapacağını seçmeni bekler.",
+            "ko": "파일을 아일랜드에 끌어다 놓아도 더 이상 접히지 않고, 무엇을 할지 고를 때까지 기다려요.",
+            "ja": "ファイルをアイランドにドロップしても閉じなくなり、操作を選ぶまで待ちます。"
+          }
+        }
+      ]
+    },
+    {
       "version": "0.5.9",
       "items": [
         {
