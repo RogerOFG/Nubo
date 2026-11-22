@@ -97,7 +97,7 @@ pub fn is_shell(id: &str) -> bool {
     matches!(
         id,
         "explorer" | "applicationframehost" | "textinputhost" | "shellexperiencehost" | "searchhost"
-            | "startmenuexperiencehost" | "lockapp" | "coucou" | "gnome-shell" | "plasmashell" | "xfdesktop"
+            | "startmenuexperiencehost" | "lockapp" | "nubo" | "gnome-shell" | "plasmashell" | "xfdesktop"
     )
 }
 
@@ -117,7 +117,7 @@ fn is_terminal(id: &str) -> bool {
 // ── Setup, on and off ─────────────────────────────────────────────────────────
 
 pub fn setup(app: &AppHandle) {
-    // Sound left muted by a Coucou that quit while listening comes back.
+    // Sound left muted by a Nubo that quit while listening comes back.
     hush::setup();
     let flow = Arc::new(Flow { store: Mutex::new(Store::load()), running: Mutex::new(None) });
     app.manage(flow.clone());
@@ -171,7 +171,7 @@ fn enable(app: &AppHandle, flow: &Arc<Flow>) {
     let app2 = app.clone();
     let flow2 = flow.clone();
     std::thread::Builder::new()
-        .name("coucou-flow".into())
+        .name("nubo-flow".into())
         .spawn(move || run(app2, flow2, rx))
         .ok();
     *running = Some(Running { tx, _listener: listener });
@@ -199,7 +199,7 @@ fn disable(app: &AppHandle, flow: &Arc<Flow>) {
 
 struct Listening {
     capture: audio::Capture,
-    /// The other apps are silent while Coucou listens (hush.rs); dropped with it.
+    /// The other apps are silent while Nubo listens (hush.rs); dropped with it.
     _hush: Option<hush::Guard>,
     take: Arc<Mutex<audio::Take>>,
     started: Instant,
@@ -302,7 +302,7 @@ fn run(app: AppHandle, flow: Arc<Flow>, rx: mpsc::Receiver<(KeyEvent, Instant)>)
         if let Some(l) = &listening {
             let levels = l.take.lock().unwrap().meter.levels;
             let _ = app.emit_to(pill::LABEL, "pill-bands", levels);
-            // The Coucou window's bands breathe with the voice while it is on screen.
+            // The Nubo window's bands breathe with the voice while it is on screen.
             if crate::hub_is_shown() {
                 let _ = app.emit_to(crate::HUB_LABEL, "flow-bands", levels);
             }
@@ -467,7 +467,7 @@ pub struct FlowStatus {
     has_claude_key: bool,
     mics: Vec<audio::InputDevice>,
     platform: &'static str,
-    /// Coucou started with the computer.
+    /// Nubo started with the computer.
     autostarted: bool,
     /// The user's first name, for "Hello Louis".
     user_name: Option<String>,

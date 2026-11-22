@@ -48,8 +48,8 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "resources": { "../target/release/coucou-hook.exe": "coucou-hook.exe" },
-    "copyright": "© Louis Raille",
+    "resources": { "../target/release/nubo-hook.exe": "nubo-hook.exe" },
+    "copyright": "© 2026 RogerOFG · MIT License",
     "category": "DeveloperTool",
     "shortDescription": "Nubo lives at the top of your screen",
     "longDescription": "Nubo sits at the top of your screen: it shows your Claude Code sessions and a few integrations, and lets you approve, answer, chat and drop files without leaving what you are doing.",

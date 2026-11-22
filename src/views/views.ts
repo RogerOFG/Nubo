@@ -7,7 +7,7 @@ import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { State, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
-import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
+import { createMiniBot, pruneMiniBots } from "../nubo/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { buildSnippets } from "./snippets";
@@ -33,7 +33,7 @@ import { buildWhatsAppCard } from "./whatsapp";
 import { WHATSAPP_ID } from "../core/whatsapp";
 import { MAIL_ID } from "../core/mail";
 import { buildMailCard } from "./mail";
-import type { Outfit, OutfitSelection } from "../mochi/wardrobe";
+import type { Outfit, OutfitSelection } from "../nubo/wardrobe";
 import { language, t, tl, type Msg } from "../i18n/i18n";
 import type { ViewCommand } from "../island/shortcuts";
 
@@ -61,13 +61,13 @@ export interface ViewActions {
   blip(): void;
   /** Wardrobe click: keeps the outfit ("auto" and "none" included). */
   chooseOutfit(selection: OutfitSelection): void;
-  /** Wardrobe hover: shows an outfit on Mochi without keeping it; null ends it. */
+  /** Wardrobe hover: shows an outfit on Nubo without keeping it; null ends it. */
   previewOutfit(outfit: Outfit | null): void;
   /** The island takes the keyboard (a text field in a card) or gives it back. */
   keyboard(on: boolean): void;
   /** Something is being typed in a card: the island stays open until it is sent or cleared. */
   holdOpen(on: boolean): void;
-  /** A Claude Code session was started from the launch card: Mochi is pleased, the island folds. */
+  /** A Claude Code session was started from the launch card: Nubo is pleased, the island folds. */
   launched(): void;
 }
 

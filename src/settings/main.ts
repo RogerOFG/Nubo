@@ -1,4 +1,4 @@
-// The Coucou window (settings.html): Flow dictation, the Notetaker and, under
+// The Nubo window (settings.html): Flow dictation, the Notetaker and, under
 // Notch, every setting of the island — the place where anything that writes to
 // disk is confirmed. The window's frame and the Flow pages live in ../hub; the
 // island's settings are drawn here, one Notch page at a time.
@@ -50,7 +50,7 @@ async function save() {
   await Bridge.saveSettings(settings);
 }
 
-/** A colour was picked for a pill's Mochi (see ./colors.ts): the island follows. */
+/** A colour was picked for a pill's Nubo (see ./colors.ts): the island follows. */
 function pickColor(next: Record<string, string>) {
   settings.pillColors = next;
   void save();
@@ -216,7 +216,7 @@ function claudeSection(status: HookStatus): HTMLElement {
     if (!status.hookReady) {
       body.append(h("div", {
         class: "notice warn",
-        text: t("coucou-hook.exe is not in place yet. Restart Nubo; if it still fails, build it with `cargo build -p coucou-hook`."),
+        text: t("nubo-hook.exe is not in place yet. Restart Nubo; if it still fails, build it with `cargo build -p nubo-hook`."),
       }));
     }
     if (status.relayError) {
@@ -352,7 +352,7 @@ function planSection(status: HookStatus): HTMLElement {
               onclick: () => void reviewChange(body, STATUS_LINE_CHANGE, true, redraw, () => void rebuild()),
             }),
       ),
-      // Codex: nothing to install, Coucou asks the Codex CLI when the pill shows.
+      // Codex: nothing to install, Nubo asks the Codex CLI when the pill shows.
       h("div", { class: "hint", text: PLAN_SETTINGS_TEXT.codex }),
       h("div", { class: "row" },
         h("label", { text: PLAN_SETTINGS_TEXT.showCodex }),
@@ -1059,7 +1059,7 @@ function generalSection(): HTMLElement {
   // The closed island (core/closed.ts): what stays at the top of the screen.
   const closed = h("select", {}) as HTMLSelectElement;
   closed.append(
-    h("option", { value: "mochi", text: t("Nubo, as on a Mac without a notch") }),
+    h("option", { value: "nubo", text: t("Nubo, as on a Mac without a notch") }),
     h("option", { value: "time", text: t("The time") }),
     h("option", { value: "datetime", text: t("The date and the time") }),
     h("option", { value: "claude", text: t("Claude usage") }),
@@ -1187,7 +1187,7 @@ function generalSection(): HTMLElement {
 
 /**
  * Settings → General → Language, as on the Mac: "System" follows the
- * system's language when Coucou has it (else English), or one of the ten.
+ * system's language when Nubo has it (else English), or one of the ten.
  * Both windows and the tray switch in place, without a restart.
  */
 function languageRow(): HTMLElement {

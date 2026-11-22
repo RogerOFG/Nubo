@@ -23,7 +23,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SOURCE = resolve(here, "../../NotchBuddy/Resources/Localizable.xcstrings");
 const OUTPUT = resolve(here, "../src/i18n/strings.json");
 
-/** The languages Coucou ships, in the Mac's picker order. English is the source. */
+/** The languages Nubo ships, in the Mac's picker order. English is the source. */
 export const LANGUAGES = ["en", "zh-Hans", "hi", "es", "ar", "fr", "bn", "pt-BR", "ru", "id", "de", "tr", "ko", "ja"];
 
 /**
@@ -84,9 +84,9 @@ function readLocalization(loc, names) {
   return typeof value === "string" ? convertFormat(value, names) : undefined;
 }
 
-/** This fork is Nubo: the Mac catalog's "Coucou" and "Mochi" are both said as Nubo, in every language. */
+/** This fork is Nubo: the Mac catalog's "Nubo" and "Nubo" are both said as Nubo, in every language. */
 function rebrand(value) {
-  if (typeof value === "string") return value.replaceAll("Coucou", "Nubo").replaceAll("Mochi", "Nubo");
+  if (typeof value === "string") return value.replaceAll("Nubo", "Nubo").replaceAll("Nubo", "Nubo");
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [rebrand(k), rebrand(v)]));
   }

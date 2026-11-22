@@ -209,7 +209,7 @@ pub fn setup(app: &AppHandle) {
         }
     }
     notes.sort_by(|a, b| b.start.cmp(&a.start));
-    // A call left recording or being written when Coucou last quit: written now.
+    // A call left recording or being written when Nubo last quit: written now.
     let unfinished: Vec<String> = notes
         .iter()
         .filter(|n| matches!(n.status, Status::Recording | Status::Processing))
@@ -423,7 +423,7 @@ pub fn stop(app: &AppHandle) {
     std::thread::spawn(move || process(&app, &id));
 }
 
-/// Coucou quits during a call: the recordings are closed properly, and the
+/// Nubo quits during a call: the recordings are closed properly, and the
 /// transcript is written at the next launch.
 pub fn shutdown(app: &AppHandle) {
     let Some(taker) = get(app) else { return };
@@ -735,7 +735,7 @@ pub fn notes_markdown(taker: State<Arc<NoteTaker>>, id: String) -> Option<String
 /// Windows asks where to save; cancelling the native dialog writes nothing.
 #[tauri::command]
 pub async fn notes_export(window: tauri::WebviewWindow, taker: State<'_, Arc<NoteTaker>>, id: String) -> Result<Option<String>, String> {
-    if window.label() != crate::HUB_LABEL { return Err("Open the note in Coucou to export it.".into()); }
+    if window.label() != crate::HUB_LABEL { return Err("Open the note in Nubo to export it.".into()); }
     let note = taker.note(&id).ok_or("no such note")?;
     let safe: String = note
         .title
@@ -745,7 +745,7 @@ pub async fn notes_export(window: tauri::WebviewWindow, taker: State<'_, Arc<Not
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    let name = if safe.is_empty() { "Coucou notes" } else { &safe };
+    let name = if safe.is_empty() { "Nubo notes" } else { &safe };
     #[cfg(windows)]
     {
         let owner = window.hwnd().map_err(|error| error.to_string())?.0 as isize;

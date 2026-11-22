@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn a_saved_list_reads_back_and_a_missing_or_broken_file_is_empty() {
-        let dir = std::env::temp_dir().join(format!("coucou-snippets-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("nubo-snippets-{}", std::process::id()));
         let path = dir.join("snippets.json");
         assert!(read_from(&path).is_empty());
         let items = vec![s("a", "Hi", "Hello\nWorld"), s("b", "Sig", "Thanks,\nMe")];

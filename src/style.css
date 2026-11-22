@@ -1,4 +1,4 @@
-/* Coucou for Windows — same palette, sizes and type scale as the macOS island.
+/* Nubo for Windows — same palette, sizes and type scale as the macOS island.
    Every colour below is copied from the Swift views. */
 
 :root {
@@ -223,7 +223,7 @@ body {
   flex-shrink: 0;
 }
 
-/* Date and time in the middle of the compact island, between Mochi and the grid. */
+/* Date and time in the middle of the compact island, between Nubo and the grid. */
 #island-clock {
   position: absolute;
   left: 50px;
@@ -472,7 +472,7 @@ body {
   color: #1ed760;
 }
 
-/* A mini Mochi: the slot is the body, the canvas is larger and overflows it so
+/* A mini Nubo: the slot is the body, the canvas is larger and overflows it so
    hands, badges and particles are not cut off. */
 .mini {
   position: relative;
@@ -3232,7 +3232,7 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 0;
 }
 
-/* ── Wardrobe (right-click on Mochi) — WardrobeView on macOS ─────────────── */
+/* ── Wardrobe (right-click on Nubo) — WardrobeView on macOS ─────────────── */
 
 .wardrobe-stack {
   padding: 12px 16px 12px 104px;
@@ -3994,7 +3994,7 @@ html[data-dir="rtl"] #views :is(.wa-text, .wa-field, .wa-preview) {
 
 /* ── Arabic: right to left ─────────────────────────────────────────────────────
    i18n.ts sets <html data-dir="rtl">. The text of the cards reads and aligns
-   right to left; Mochi, the pills, the header and the cards themselves keep
+   right to left; Nubo, the pills, the header and the cards themselves keep
    their places, and code, commands and the contribution grid stay left to
    right. A chat message follows its own text's direction (an English answer
    stays left to right). */

@@ -246,7 +246,7 @@ export function whatsappSection(host: WhatsAppSettingsHost): HTMLElement {
   function draw() {
     const v = view;
     if (!v) return;
-    // Installed by Coucou just now: the fields follow what it set.
+    // Installed by Nubo just now: the fields follow what it set.
     const install = JSON.stringify(v.install);
     if (!fieldsFilled || (install !== lastInstall && v.install.step === "done")) fillFields(v);
     lastInstall = install;
@@ -259,7 +259,7 @@ export function whatsappSection(host: WhatsAppSettingsHost): HTMLElement {
     if (v.prefs.enabled && !host.pillActive()) {
       parts.push(h("div", { class: "hint", style: hintStyle("#F4505E"), text: t("Turn off another pill to make room for WhatsApp ({max} at most).", { max: host.maxPills }) }));
     }
-    // One click: Coucou downloads GOWA, checks it and starts it. No command line.
+    // One click: Nubo downloads GOWA, checks it and starts it. No command line.
     if (v.prefs.gateway === "gowa") parts.push(...installBlock(v));
     if (showsLinkState(v)) parts.push(...linkState(v));
     dynamic.replaceChildren(...parts);

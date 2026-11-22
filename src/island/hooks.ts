@@ -168,11 +168,11 @@ interface HookPayload {
   tool_name?: string;
   tool_input?: Record<string, unknown>;
   /** Set by the relay when an edit was too big to forward whole (> 256 KB). */
-  coucou_diff_truncated?: boolean;
+  nubo_diff_truncated?: boolean;
   /** Optional agent tag: lowercase, digits and hyphens, ≤ 24 chars. */
-  coucou_agent?: string;
-  /** "agy_pre_tool": an Antigravity command Coucou may show on the card (agents.ts). */
-  coucou_kind?: string;
+  nubo_agent?: string;
+  /** "agy_pre_tool": an Antigravity command Nubo may show on the card (agents.ts). */
+  nubo_kind?: string;
   /** Hermes: where the session runs (telegram, discord…; "cli" in a terminal). */
   platform?: string;
   /** "cursor" when Claude Code runs in Cursor's terminal (set by the relay). */
@@ -183,11 +183,7 @@ interface HookPayload {
   agent_type?: string;
 }
 
-const PROJECT_ALIASES: Record<string, string> = {
-  "notch-buddy": "Notch Buddy",
-  notchbuddy: "Notch Buddy",
-  notch_buddy: "Notch Buddy",
-};
+const PROJECT_ALIASES: Record<string, string> = {};
 
 function aliasProjectName(name: string): string {
   return PROJECT_ALIASES[name.toLowerCase()] ?? name;
@@ -341,7 +337,7 @@ function clearFinalLine(id: string) {
  * would give wrong counts: the PreToolUse step ("Edits · file") stands alone.
  */
 function recordDiff(agentId: string, payload: HookPayload) {
-  if (payload.coucou_diff_truncated) return;
+  if (payload.nubo_diff_truncated) return;
   if (!State.tasks.some((t) => t.id === agentId)) return;
   const diff = buildFileDiff(payload.tool_name ?? "", payload.tool_input ?? {});
   if (!diff) return;
@@ -384,10 +380,10 @@ function handleHook(island: Island, payload: HookPayload) {
   const raw = lastPathComponent(cwd);
   const projectName = aliasProjectName(raw || "Session");
 
-  // Route to the right pill. Valid coucou_agent → dynamic "agent_<name>" pill.
+  // Route to the right pill. Valid nubo_agent → dynamic "agent_<name>" pill.
   // "claude" is reserved; absent or invalid → Claude Code's own pill: Cursor's
   // when it runs in Cursor's terminal (Mac #120), VS Code's otherwise.
-  const validAgent = validateAgent(payload.coucou_agent);
+  const validAgent = validateAgent(payload.nubo_agent);
   const workspaceId = payload.term_editor === "cursor" ? CURSOR_ID : CLAUDE_ID;
   const agentId = validAgent ? `agent_${validAgent}` : workspaceId;
   const isExternalAgent = validAgent !== null;
@@ -446,7 +442,7 @@ function handleHook(island: Island, payload: HookPayload) {
   const focused = State.focusId === agentId;
 
   // Each Claude Code session teaches the launch card a project (Mac: SessionLauncher.remember).
-  if ((name === "SessionStart" || name === "UserPromptSubmit") && !payload.coucou_agent && cwd) Launch.remember(cwd);
+  if ((name === "SessionStart" || name === "UserPromptSubmit") && !payload.nubo_agent && cwd) Launch.remember(cwd);
 
   switch (name) {
     case "SessionStart":
@@ -609,7 +605,7 @@ function handleHook(island: Island, payload: HookPayload) {
       // CLI, Muse Code, and Antigravity's commands when that is turned on — same
       // as the Mac) get a card. Anyone else's request is declined at once, so the
       // agent asks in its own terminal.
-      if (isExternalAgent && !takesCard(validAgent, payload.coucou_kind)) {
+      if (isExternalAgent && !takesCard(validAgent, payload.nubo_kind)) {
         if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
         break;
       }
@@ -649,7 +645,7 @@ function handleHook(island: Island, payload: HookPayload) {
         ...(questions ? { questions } : {}),
       };
 
-      // Coucou answers within 108 s or not at all; after that the terminal has
+      // Nubo answers within 108 s or not at all; after that the terminal has
       // taken over and the card would be lying.
       armRequestTimeout(island, requestId);
       Sound.play(view);

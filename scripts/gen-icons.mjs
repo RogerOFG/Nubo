@@ -22,7 +22,7 @@ const GLOW = [140, 120, 255];
 const SS = 4; // supersampling factor
 
 // The cloud, in units of R: three round lobes on a flat base with rounded corners.
-// The same shapes as CLOUD_LOBES / CLOUD_BASE in src/mochi/engine.ts — keep them together.
+// The same shapes as CLOUD_LOBES / CLOUD_BASE in src/nubo/engine.ts — keep them together.
 const LOBES = [
   [0.04, -0.05, 0.6],
   [-0.65, 0.36, 0.47],

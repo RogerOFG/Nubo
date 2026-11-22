@@ -98,22 +98,22 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   // to the shared image.
   recap: { height: 184, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   wardrobe: { height: 160, botX: 68, botY: null, botDiameter: 58, agentMode: "none" },
-  // New version: Mochi on the left, the version and Update now (Mac: .update).
+  // New version: Nubo on the left, the version and Update now (Mac: .update).
   update: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "none" },
   // After an update: what the new version brings, then "Your Nubo so far".
   // Taller than a card, for two rows of items with their line (and, on the
   // second step, the Botan line under the thanks).
   whatsNew: { height: 248, botX: 62, botY: null, botDiameter: 58, agentMode: "none" },
-  // A new Claude Code session: Mochi on the left, the project and the prompt (Mac: .launch).
+  // A new Claude Code session: Nubo on the left, the project and the prompt (Mac: .launch).
   launch: { height: 160, botX: 58, botY: null, botDiameter: 52, agentMode: "none" },
-  // Quick texts: Mochi on the left, the chips (and their editor) to his right.
-  // Tasks and notes: two cards side by side, no room for Mochi.
+  // Quick texts: Nubo on the left, the chips (and their editor) to his right.
+  // Tasks and notes: two cards side by side, no room for Nubo.
   tasks: { height: 196, botX: 0, botY: null, botDiameter: 0, agentMode: "none" },
   snippets: { height: 196, botX: 86, botY: null, botDiameter: 56, agentMode: "none" },
 };
 
 // The upload views above are only the fallback geometry. Once a file is actually
-// dropped the whole sequence — Mochi included — is drawn by src/upload, which
+// dropped the whole sequence — Nubo included — is drawn by src/upload, which
 // owns its own constants (USC) straight from UploadSequenceEngine.swift.
 
 /** The question view with options to pick from: room for two rows of them. */
@@ -218,18 +218,7 @@ export function botGlowOpacity(s: BotStateName): number {
 }
 
 // Project colours (IslandConst.projectColors)
-const PROJECT_COLORS: Record<string, string> = {
-  korus: "#FF5A4E",
-  "sbe hub": "#2EC4A0",
-  "morning ai brief": "#F29B38",
-  "publication ig": "#7C5CFF",
-  "ig post": "#7C5CFF",
-  "louisraille.fr": "#38BDF8",
-  louisraille: "#38BDF8",
-  "notch buddy": "#EC4899",
-  "notch-buddy": "#EC4899",
-  notchbuddy: "#EC4899",
-};
+const PROJECT_COLORS: Record<string, string> = {};
 
 const FALLBACK_COLORS = ["#22C55E", "#EAB308", "#60A5FA", "#E879F9"];
 

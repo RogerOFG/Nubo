@@ -18,7 +18,7 @@ export const SOUNDS_DIR = existsSync(MAC_SOUNDS) ? MAC_SOUNDS : resolve(__dirnam
 function sharedSounds(): Plugin {
   const prefix = "/sounds/";
   return {
-    name: "coucou-shared-sounds",
+    name: "nubo-shared-sounds",
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith(prefix)) return next();
@@ -65,7 +65,7 @@ export default defineConfig({
       input: {
         island: resolve(__dirname, "index.html"),
         settings: resolve(__dirname, "settings.html"),
-        mochi: resolve(__dirname, "mochi.html"),
+        nubo: resolve(__dirname, "nubo.html"),
         pill: resolve(__dirname, "pill.html"),
       },
       output: {

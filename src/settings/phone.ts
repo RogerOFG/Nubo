@@ -12,7 +12,7 @@ type Toggle = (on: boolean, onChange: (v: boolean) => void) => HTMLElement;
 
 /**
  * The relay block ("Away from home Wi-Fi") is hidden until a relay is ready to use: the code and its tests stay.
- * Testers who start Coucou with COUCOU_RELAY_SETTINGS=1 see it (docs/RELAY_DEPLOY.md), and so does anyone whose relay
+ * Testers who start Nubo with NUBO_RELAY_SETTINGS=1 see it (docs/RELAY_DEPLOY.md), and so does anyone whose relay
  * is already on. Nothing else changes.
  */
 function relaySlot(makeToggle: Toggle, refreshPairing: () => void): HTMLElement {

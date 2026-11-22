@@ -2,7 +2,7 @@
 // Tasks tab with a sound, and the task rings — highlighted — for a minute and a half.
 //
 // The island's page keeps the clock: every 20 seconds it looks at the list.
-// A task whose time passed while Coucou was closed is reminded when it starts.
+// A task whose time passed while Nubo was closed is reminded when it starts.
 
 import { Sound } from "../core/sound";
 import { State } from "../core/state";

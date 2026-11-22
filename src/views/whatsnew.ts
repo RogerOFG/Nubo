@@ -1,7 +1,7 @@
 // What's new after an update (whats-new/controller.ts decides when): first
 // what this version brings — an icon, a title and a line per item — then
-// "Your Nubo so far", the numbers this computer kept, and Buy Mochi a
-// coffee. Same left inset as the other cards, Mochi on the left.
+// "Your Nubo so far", the numbers this computer kept, and Buy Nubo a
+// coffee. Same left inset as the other cards, Nubo on the left.
 
 import { h, clear, svg } from "./dom";
 import { washRGBA } from "../core/layout";

@@ -34,7 +34,7 @@ pub fn txt(fingerprint: &str) -> Option<Vec<(String, String)>> {
     Some(vec![("v".to_string(), TXT_VERSION.to_string()), ("fp".to_string(), id)])
 }
 
-/// A DNS host label from the computer's name: ASCII letters, digits and hyphens, at most 63, "coucou" if nothing is left.
+/// A DNS host label from the computer's name: ASCII letters, digits and hyphens, at most 63, "nubo" if nothing is left.
 pub fn host_label(name: &str) -> String {
     let mut label: String = name
         .chars()
@@ -45,7 +45,7 @@ pub fn host_label(name: &str) -> String {
         .take(63)
         .collect();
     if label.is_empty() {
-        label = "coucou".to_string();
+        label = "nubo".to_string();
     }
     label
 }
@@ -221,7 +221,7 @@ pub mod tests {
         assert_eq!(ad.instance, "Rhytam's PC");
         assert_eq!(ad.host, "Rhytam-s-PC.local.");
         assert_eq!(ad.port, 47821);
-        assert_eq!(host_label("***"), "coucou");
+        assert_eq!(host_label("***"), "nubo");
         assert_eq!(host_label(&"a".repeat(100)).len(), 63);
         assert_eq!(advert("   ", 1, FP).unwrap().instance, "Nubo");
     }

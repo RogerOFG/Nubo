@@ -1,4 +1,4 @@
-// What's new after an update, and the blue Mochi while one waits — the rules,
+// What's new after an update, and the blue Nubo while one waits — the rules,
 // pure, so tests/whats-new.test.mjs checks them. The island side is in
 // controller.ts, the card in views/whatsnew.ts.
 //
@@ -77,7 +77,7 @@ export interface LaunchFacts {
   /** The last version this install saw (null: none stored yet). */
   lastSeen: string | null;
   /**
-   * Signs that Coucou ran here before, for installs from before this card
+   * Signs that Nubo ran here before, for installs from before this card
    * (0.5.1 stored no version): the update question answered, agent sessions
    * or decisions in the recap, dictations, notes.
    */
@@ -142,7 +142,7 @@ export function soFar(input: StatsInput): Stat[] {
   return all.filter((s) => s.value > 0);
 }
 
-/** Whether anything shows Coucou ran here before (see LaunchFacts.usedBefore). */
+/** Whether anything shows Nubo ran here before (see LaunchFacts.usedBefore). */
 export function usedBefore(facts: {
   consent: boolean | null;
   history: RecapHistory | null | undefined;
@@ -156,7 +156,7 @@ export function usedBefore(facts: {
     || facts.notes > 0;
 }
 
-// ── The blue Mochi while a version waits ──────────────────────────────────────
+// ── The blue Nubo while a version waits ──────────────────────────────────────
 
 /** "Later" keeps the version quiet for a day, the blue included (Mac: snooze). */
 export const LATER_MS = 24 * 3600 * 1000;
@@ -168,7 +168,7 @@ export interface Later {
 }
 
 /**
- * A newer version is out, the user let Coucou look for it, it is not being
+ * A newer version is out, the user let Nubo look for it, it is not being
  * installed, and "Later" was not pressed for it in the last day.
  */
 export function updateWaiting(status: UpdateStatus, later: Later | null, nowMs: number): boolean {
@@ -179,7 +179,7 @@ export function updateWaiting(status: UpdateStatus, later: Later | null, nowMs: 
   return true;
 }
 
-/** Mochi turns blue only when he has nothing else to say. */
+/** Nubo turns blue only when he has nothing else to say. */
 export function showsUpdateHint(waiting: boolean, state: BotStateName, pending: boolean): boolean {
   return waiting && !pending && (state === "idle" || state === "sleeping");
 }

@@ -2,8 +2,8 @@
 //
 // WebView2 draws with the graphics card, and after the PC has slept the card's
 // state is often lost: the island came back half drawn (a black block, a pill,
-// no Mochi). Nothing in a page can tell, so Windows is asked to say when the PC
-// wakes, and the pages — the island, Mochi on the desktop, the dictation pill —
+// no Nubo). Nothing in a page can tell, so Windows is asked to say when the PC
+// wakes, and the pages — the island, Nubo on the desktop, the dictation pill —
 // reload themselves (`system-resumed`). What they show comes back from the
 // settings and the next hook; nothing is lost that was not stale already.
 //
@@ -71,7 +71,7 @@ fn recompose(app: &tauri::AppHandle) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Controller2, COREWEBVIEW2_COLOR};
     use wv2_core::Interface;
 
-    for label in ["island", "mochi", "pill"] {
+    for label in ["island", "nubo", "pill"] {
         let Some(win) = app.get_webview_window(label) else { continue };
         let visible = win.is_visible().unwrap_or(false);
         let size = win.outer_size().map(|s| format!("{}x{}", s.width, s.height)).unwrap_or_default();

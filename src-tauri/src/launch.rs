@@ -3,12 +3,12 @@
 //
 // Launch: the user's terminal opens in the project with `claude` and the
 // prompt. The prompt is never spliced into a command line:
-// - Linux: it travels in COUCOU_PROMPT, set on the terminal's process, and the
-//   user's login shell runs `claude "$COUCOU_PROMPT"` (as the Mac's script).
+// - Linux: it travels in NUBO_PROMPT, set on the terminal's process, and the
+//   user's login shell runs `claude "$NUBO_PROMPT"` (as the Mac's script).
 // - Windows: Windows Terminal starts its tabs with a fresh environment, not
 //   wt.exe's (microsoft/terminal#11094), so an environment variable set on
 //   wt.exe never reaches the tab. The prompt goes into a file of ours in the
-//   temp folder instead; PowerShell reads it into $env:COUCOU_PROMPT, deletes
+//   temp folder instead; PowerShell reads it into $env:NUBO_PROMPT, deletes
 //   it, and runs claude with that variable. Only the file's path, which we
 //   made, is in the command line.
 // The session then shows in the island like any other, through the hooks.
@@ -60,11 +60,11 @@ pub fn sh_quote(s: &str) -> String {
 }
 
 /// What the terminal runs: the user's login shell (so `claude` is found as in
-/// any terminal), Claude Code with the prompt from COUCOU_PROMPT, then the
+/// any terminal), Claude Code with the prompt from NUBO_PROMPT, then the
 /// shell again in the project once Claude Code quits.
 #[cfg_attr(windows, allow(dead_code))]
 pub fn shell_command(shell: &str, has_prompt: bool) -> Vec<String> {
-    let run = if has_prompt { r#"claude "$COUCOU_PROMPT""# } else { "claude" };
+    let run = if has_prompt { r#"claude "$NUBO_PROMPT""# } else { "claude" };
     vec![shell.to_string(), "-lic".to_string(), format!("{run}; exec {} -l", sh_quote(shell))]
 }
 
@@ -94,7 +94,7 @@ pub fn linux_candidates(env_terminal: Option<&str>) -> Vec<String> {
 /// The arguments that make `terminal` open a window in `dir` running `command`.
 /// Unknown terminals get the common `-e` (as x-terminal-emulator must take).
 /// konsole and wezterm are asked for a process of their own, so the window
-/// gets this environment (COUCOU_PROMPT) and not the one of a running copy.
+/// gets this environment (NUBO_PROMPT) and not the one of a running copy.
 #[cfg_attr(windows, allow(dead_code))]
 pub fn linux_terminal_args(terminal: &str, dir: &str, command: &[String]) -> Vec<String> {
     let name = Path::new(terminal).file_name().and_then(|n| n.to_str()).unwrap_or(terminal);
@@ -117,7 +117,7 @@ pub fn linux_terminal_args(terminal: &str, dir: &str, command: &[String]) -> Vec
 pub fn linux_spawn(terminal: &str, shell: &str, folder: &str, prompt: &str) -> Spawn {
     let prompt = clean_prompt(prompt);
     let command = shell_command(shell, !prompt.is_empty());
-    let env = if prompt.is_empty() { Vec::new() } else { vec![("COUCOU_PROMPT".to_string(), prompt)] };
+    let env = if prompt.is_empty() { Vec::new() } else { vec![("NUBO_PROMPT".to_string(), prompt)] };
     Spawn { program: terminal.to_string(), args: linux_terminal_args(terminal, folder, &command), env, dir: folder.to_string() }
 }
 
@@ -138,7 +138,7 @@ pub fn windows_prompt(prompt: &str) -> String {
     clean_prompt(prompt).replace('"', "'")
 }
 
-/// What PowerShell runs. With a prompt: read the file into COUCOU_PROMPT,
+/// What PowerShell runs. With a prompt: read the file into NUBO_PROMPT,
 /// delete it, start Claude Code with it. `Get-Command -CommandType
 /// Application` takes claude.exe or claude.cmd, never npm's claude.ps1, which
 /// the default execution policy refuses to run. No double quote and nothing
@@ -151,8 +151,8 @@ pub fn powershell_script(prompt_file: Option<&str>) -> String {
         Some(file) => {
             let f = ps_quote(file);
             format!(
-                "$env:COUCOU_PROMPT = Get-Content -LiteralPath {f} -Raw -Encoding UTF8; \
-                 Remove-Item -LiteralPath {f}; {claude} $env:COUCOU_PROMPT"
+                "$env:NUBO_PROMPT = Get-Content -LiteralPath {f} -Raw -Encoding UTF8; \
+                 Remove-Item -LiteralPath {f}; {claude} $env:NUBO_PROMPT"
             )
         }
     }
@@ -178,7 +178,7 @@ pub fn terminal_choice(raw: &str) -> &'static str {
 }
 
 /// The batch file CMD runs (and Warp, through `cmd /C`): the prompt is read
-/// from our file into COUCOU_PROMPT, the file is deleted, Claude Code starts
+/// from our file into NUBO_PROMPT, the file is deleted, Claude Code starts
 /// with the variable. The prompt is on one line (`clean_prompt`) and no double
 /// quote is in it (`windows_prompt`); delayed expansion keeps `&`, `|` and `%`
 /// in it from being read as commands. Only our own file's path is spelled out.
@@ -187,8 +187,8 @@ pub fn cmd_script(prompt_file: Option<&str>) -> String {
     match prompt_file {
         None => "@echo off\r\nclaude\r\n".to_string(),
         Some(f) => format!(
-            "@echo off\r\nsetlocal EnableDelayedExpansion\r\nset \"COUCOU_PROMPT=\"\r\n\
-             set /p COUCOU_PROMPT=<\"{f}\"\r\ndel \"{f}\" >nul 2>&1\r\nclaude \"!COUCOU_PROMPT!\"\r\n"
+            "@echo off\r\nsetlocal EnableDelayedExpansion\r\nset \"NUBO_PROMPT=\"\r\n\
+             set /p NUBO_PROMPT=<\"{f}\"\r\ndel \"{f}\" >nul 2>&1\r\nclaude \"!NUBO_PROMPT!\"\r\n"
         ),
     }
 }
@@ -210,7 +210,7 @@ pub fn yaml_quote(s: &str) -> String {
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn warp_config(folder: &str, batch: &str) -> String {
     format!(
-        "# Written by Coucou for \"New Claude Code session\"; replaced at each launch.\n---\nname: coucou-session\n\
+        "# Written by Nubo for \"New Claude Code session\"; replaced at each launch.\n---\nname: nubo-session\n\
          windows:\n  - tabs:\n      - title: Claude Code\n        layout:\n          cwd: {}\n          commands:\n            - exec: {}\n",
         yaml_quote(folder),
         yaml_quote(&format!("cmd.exe /C \"{batch}\""))
@@ -289,7 +289,7 @@ fn start(spawn: &Spawn, new_console: bool) -> std::io::Result<()> {
     #[cfg(not(windows))]
     {
         let _ = new_console;
-        // Coucou's own GDK settings stay out of the terminal (platform/linux.rs).
+        // Nubo's own GDK settings stay out of the terminal (platform/linux.rs).
         platform::no_console(&mut cmd);
     }
     for (k, v) in &spawn.env {
@@ -327,7 +327,7 @@ fn launch_here(folder: &str, prompt: &str) -> Result<String, String> {
     } else {
         let mut bytes = [0u8; 8];
         ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).map_err(|_| "no randomness")?;
-        let name = format!("coucou-prompt-{}.txt", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
+        let name = format!("nubo-prompt-{}.txt", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
         let path = std::env::temp_dir().join(name);
         std::fs::write(&path, prompt.as_bytes()).map_err(|e| e.to_string())?;
         // PowerShell deletes it once read; this catches a terminal that never started.
@@ -344,7 +344,7 @@ fn launch_here(folder: &str, prompt: &str) -> Result<String, String> {
     if choice == "cmd" || choice == "warp" {
         let mut bytes = [0u8; 8];
         ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).map_err(|_| "no randomness")?;
-        let name = format!("coucou-session-{}.cmd", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
+        let name = format!("nubo-session-{}.cmd", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
         let batch = std::env::temp_dir().join(name);
         std::fs::write(&batch, cmd_script(file.as_deref())).map_err(|e| e.to_string())?;
         let stale = batch.clone();
@@ -388,9 +388,9 @@ fn launch_warp(folder: &str, batch: &str) -> Result<String, String> {
         .join("data")
         .join("launch_configurations");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("coucou-session.yaml"), warp_config(folder, batch)).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("nubo-session.yaml"), warp_config(folder, batch)).map_err(|e| e.to_string())?;
     let mut cmd = Command::new("cmd.exe");
-    cmd.args(["/C", "start", "", "warp://launch/coucou-session"]);
+    cmd.args(["/C", "start", "", "warp://launch/nubo-session"]);
     platform::no_console(&mut cmd);
     cmd.spawn().map(|_| "Warp".to_string()).map_err(|e| e.to_string())
 }
@@ -482,8 +482,8 @@ mod tests {
         assert!(valid_folder(&dir.to_string_lossy()));
         assert!(!valid_folder(""));
         assert!(!valid_folder("relative/path"));
-        assert!(!valid_folder("/no/such/folder/coucou-xyz"));
-        let file = dir.join("coucou-launch-test-file.txt");
+        assert!(!valid_folder("/no/such/folder/nubo-xyz"));
+        let file = dir.join("nubo-launch-test-file.txt");
         std::fs::write(&file, "x").unwrap();
         assert!(!valid_folder(&file.to_string_lossy()), "a file is not a folder");
         let _ = std::fs::remove_file(file);
@@ -501,7 +501,7 @@ mod tests {
     fn the_shell_runs_claude_with_the_variable_never_the_prompt() {
         assert_eq!(
             shell_command("/bin/zsh", true),
-            s(&["/bin/zsh", "-lic", r#"claude "$COUCOU_PROMPT"; exec /bin/zsh -l"#])
+            s(&["/bin/zsh", "-lic", r#"claude "$NUBO_PROMPT"; exec /bin/zsh -l"#])
         );
         assert_eq!(shell_command("/usr/bin/fish", false), s(&["/usr/bin/fish", "-lic", "claude; exec /usr/bin/fish -l"]));
     }
@@ -543,9 +543,9 @@ mod tests {
         let spawn = linux_spawn("/usr/bin/kitty", "/bin/zsh", "/home/me/p", nasty);
         assert_eq!(spawn.program, "/usr/bin/kitty");
         assert_eq!(spawn.dir, "/home/me/p");
-        assert_eq!(spawn.env, vec![("COUCOU_PROMPT".to_string(), nasty.to_string())]);
+        assert_eq!(spawn.env, vec![("NUBO_PROMPT".to_string(), nasty.to_string())]);
         assert!(spawn.args.iter().all(|a| !a.contains("login") && !a.contains("rm -rf")), "{:?}", spawn.args);
-        assert_eq!(spawn.args.last().unwrap(), r#"claude "$COUCOU_PROMPT"; exec /bin/zsh -l"#);
+        assert_eq!(spawn.args.last().unwrap(), r#"claude "$NUBO_PROMPT"; exec /bin/zsh -l"#);
 
         let empty = linux_spawn("kitty", "/bin/zsh", "/home/me/p", "  \n ");
         assert!(empty.env.is_empty());
@@ -562,12 +562,12 @@ mod tests {
     #[test]
     fn powershell_reads_the_prompt_from_our_file() {
         assert_eq!(powershell_script(None), "& (Get-Command claude -CommandType Application -TotalCount 1)");
-        let script = powershell_script(Some(r"C:\Temp\coucou-prompt-ab.txt"));
+        let script = powershell_script(Some(r"C:\Temp\nubo-prompt-ab.txt"));
         assert_eq!(
             script,
-            "$env:COUCOU_PROMPT = Get-Content -LiteralPath 'C:\\Temp\\coucou-prompt-ab.txt' -Raw -Encoding UTF8; \
-             Remove-Item -LiteralPath 'C:\\Temp\\coucou-prompt-ab.txt'; \
-             & (Get-Command claude -CommandType Application -TotalCount 1) $env:COUCOU_PROMPT"
+            "$env:NUBO_PROMPT = Get-Content -LiteralPath 'C:\\Temp\\nubo-prompt-ab.txt' -Raw -Encoding UTF8; \
+             Remove-Item -LiteralPath 'C:\\Temp\\nubo-prompt-ab.txt'; \
+             & (Get-Command claude -CommandType Application -TotalCount 1) $env:NUBO_PROMPT"
         );
         // wt.exe re-joins its arguments in quotes: none may be inside.
         assert!(!script.contains('"'));
@@ -603,11 +603,11 @@ mod tests {
     #[test]
     fn cmd_reads_the_prompt_from_our_file_with_delayed_expansion() {
         assert_eq!(cmd_script(None), "@echo off\r\nclaude\r\n");
-        let script = cmd_script(Some(r"C:\Temp\coucou-prompt-ab.txt"));
+        let script = cmd_script(Some(r"C:\Temp\nubo-prompt-ab.txt"));
         assert!(script.contains("setlocal EnableDelayedExpansion"));
-        assert!(script.contains(r#"set /p COUCOU_PROMPT=<"C:\Temp\coucou-prompt-ab.txt""#));
-        assert!(script.contains(r#"del "C:\Temp\coucou-prompt-ab.txt""#));
-        assert!(script.trim_end().ends_with(r#"claude "!COUCOU_PROMPT!""#));
+        assert!(script.contains(r#"set /p NUBO_PROMPT=<"C:\Temp\nubo-prompt-ab.txt""#));
+        assert!(script.contains(r#"del "C:\Temp\nubo-prompt-ab.txt""#));
+        assert!(script.trim_end().ends_with(r#"claude "!NUBO_PROMPT!""#));
         let spawn = cmd_spawn(r"C:\Temp\x.cmd", r"C:\code");
         assert_eq!(spawn.program, "cmd.exe");
         assert_eq!(spawn.args, s(&["/K", r"C:\Temp\x.cmd"]));
@@ -618,7 +618,7 @@ mod tests {
     fn warp_gets_a_launch_configuration_with_quoted_values() {
         assert_eq!(yaml_quote("it's"), "'it''s'");
         let yaml = warp_config(r"C:\my 'app'", r"C:\Temp\x.cmd");
-        assert!(yaml.contains("name: coucou-session"));
+        assert!(yaml.contains("name: nubo-session"));
         assert!(yaml.contains(r"cwd: 'C:\my ''app'''"));
         assert!(yaml.contains(r#"exec: 'cmd.exe /C "C:\Temp\x.cmd"'"#));
     }

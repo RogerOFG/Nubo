@@ -1,4 +1,4 @@
-// The Mail section of the Coucou window (classic Outlook): the automatic sorting and its
+// The Mail section of the Nubo window (classic Outlook): the automatic sorting and its
 // journal, the rules, the banned words and the VIPs. Port of MailHubPages.swift; what they
 // decide lives in src-tauri/src/mail/triage.rs.
 

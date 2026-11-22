@@ -66,7 +66,7 @@ export function lyricWindow(lines: readonly LyricLine[], position: number) {
 
 // ── The card's lyrics view (the speech-bubble button) ───────────────────────
 
-const VIEW_KEY = "coucou.lyricsView";
+const VIEW_KEY = "nubo.lyricsView";
 let viewOn = (() => {
   try {
     return localStorage.getItem(VIEW_KEY) === "1";

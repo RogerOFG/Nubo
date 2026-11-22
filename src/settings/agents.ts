@@ -110,7 +110,7 @@ function agentBlock(initial: AgentHookStatus): HTMLElement {
 
   /**
    * Antigravity's commands waiting for Allow / Deny on the island, as on the Mac: off by
-   * default, shown once the hooks are installed. Hooks written by an older Coucou give
+   * default, shown once the hooks are installed. Hooks written by an older Nubo give
    * Antigravity 10 s, too short to wait for a click: they must be installed again.
    */
   function agyApprovalsRow(current: AgyApprovalsStatus): HTMLElement {

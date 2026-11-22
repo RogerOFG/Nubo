@@ -1,4 +1,4 @@
-// « OK Coucou »: say it, then ask anything. Turning it on, how Coucou answers
+// « OK Nubo »: say it, then ask anything. Turning it on, how Nubo answers
 // out loud, and what leaves the computer. Port of the Mac's Settings → Voice.
 
 import { h, clear } from "../../views/dom";
@@ -43,7 +43,7 @@ function elevenKey(): HTMLElement {
 export async function voicePage(page: HTMLElement, ctx: HubContext) {
   const status = await ctx.refresh();
   const prefs = status.prefs;
-  page.append(ctx.hero("voice", "OK Coucou", t("Say « OK Nubo », then ask anything: add a pill, play music, the weather, an email to prepare.")));
+  page.append(ctx.hero("voice", "OK Nubo", t("Say « OK Nubo », then ask anything: add a pill, play music, the weather, an email to prepare.")));
 
   const ready = status.models.parakeet.state === "ready";
   page.append(label(t("Listening")));

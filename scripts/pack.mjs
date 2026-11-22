@@ -34,10 +34,10 @@ const PACKAGES = {
     {
       dir: "appimage",
       suffix: ".AppImage",
-      names: [`Coucou-Linux-${version}-${arch}.AppImage`, `Coucou-Linux-${arch}.AppImage`],
+      names: [`Nubo-Linux-${version}-${arch}.AppImage`, `Nubo-Linux-${arch}.AppImage`],
     },
-    { dir: "deb", suffix: ".deb", names: [`Coucou-Linux-${version}-${debArch}.deb`] },
-    { dir: "rpm", suffix: ".rpm", names: [`Coucou-Linux-${version}-${arch}.rpm`] },
+    { dir: "deb", suffix: ".deb", names: [`Nubo-Linux-${version}-${debArch}.deb`] },
+    { dir: "rpm", suffix: ".rpm", names: [`Nubo-Linux-${version}-${arch}.rpm`] },
   ],
 };
 

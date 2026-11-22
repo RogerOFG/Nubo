@@ -1,5 +1,5 @@
 // Quick texts: cards on the island, each one a text that a click copies to the
-// clipboard, ready to paste. The same dashed card as the file drop, beside Mochi.
+// clipboard, ready to paste. The same dashed card as the file drop, beside Nubo.
 //
 // "Edit" turns the cards into buttons that open their editor; "+" starts a new
 // one. The editor takes the keyboard (like the chat field) and gives it back
