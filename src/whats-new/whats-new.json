@@ -147,6 +147,46 @@
       ]
     },
     {
+      "version": "0.5.11",
+      "items": [
+        {
+          "icon": "sparkles",
+          "title": {
+            "en": "Codex alerts",
+            "zh-Hans": "Codex 通知",
+            "hi": "Codex सूचनाएँ",
+            "es": "Avisos de Codex",
+            "ar": "إشعارات Codex",
+            "fr": "Notifications Codex",
+            "bn": "Codex বিজ্ঞপ্তি",
+            "pt-BR": "Avisos do Codex",
+            "ru": "Уведомления Codex",
+            "id": "Notifikasi Codex",
+            "de": "Codex-Hinweise",
+            "tr": "Codex bildirimleri",
+            "ko": "Codex 알림",
+            "ja": "Codex の通知"
+          },
+          "detail": {
+            "en": "Completion alerts stay visible longer.",
+            "zh-Hans": "完成通知会显示更久。",
+            "hi": "काम पूरा होने की सूचना ज़्यादा देर दिखती है।",
+            "es": "Los avisos de finalización se quedan visibles más tiempo.",
+            "ar": "تظل إشعارات اكتمال العمل ظاهرة لمدة أطول.",
+            "fr": "Les notifications de fin restent visibles plus longtemps.",
+            "bn": "কাজ শেষ হওয়ার বিজ্ঞপ্তি আরও বেশি সময় দেখা যায়।",
+            "pt-BR": "Os avisos de conclusão ficam visíveis por mais tempo.",
+            "ru": "Уведомления о завершении видны дольше.",
+            "id": "Notifikasi selesai terlihat lebih lama.",
+            "de": "Hinweise zum Abschluss bleiben länger sichtbar.",
+            "tr": "Tamamlanma bildirimleri daha uzun süre görünür.",
+            "ko": "완료 알림이 더 오래 표시됩니다.",
+            "ja": "完了通知がより長く表示されます。"
+          }
+        }
+      ]
+    },
+    {
       "version": "0.5.10",
       "items": [
         {
