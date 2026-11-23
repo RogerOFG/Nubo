@@ -263,6 +263,7 @@ export const Bridge = {
 
   /** The Claude desktop app, for the Claude Desktop pill (Windows only). */
   openClaudeDesktop: () => call<boolean>("open_claude_desktop"),
+  openCodexDesktop: (sessionId: string | null) => call<boolean>("open_codex_desktop", { sessionId }),
 
   /**
    * A new Claude Code session: the user's terminal in `folder`, running
@@ -406,6 +407,7 @@ export const Bridge = {
     callOrThrow<LocalServer>("local_connect", { provider, url }),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
+  dragShelfFile: (path: string) => callOrThrow<void>("drag_shelf_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */
   secretPresent: (key: string) => call<boolean>("secret_present", { key }),
   /** Whether Claude can answer: the API key, or else the user's own Claude Code. */
@@ -711,7 +713,10 @@ interface WebView2Bridge {
  * the drop hands the File objects to Rust, which answers with their real paths
  * as a `file-drag` event. Elsewhere (Linux) Tauri's own drag events still do it.
  */
-export async function onDragDrop(handler: (e: DragDropPayload) => void) {
+export async function onDragDrop(
+  handler: (e: DragDropPayload) => void,
+  acceptFiles: () => boolean,
+) {
   if (!IS_TAURI) return () => {};
   const webview = (window as unknown as { chrome?: { webview?: WebView2Bridge } }).chrome?.webview;
   if (!webview) {
@@ -726,14 +731,15 @@ export async function onDragDrop(handler: (e: DragDropPayload) => void) {
   const onEnter = (e: DragEvent) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
-    if (depth++ === 0) handler({ type: "enter" });
+    if (acceptFiles() && depth++ === 0) handler({ type: "enter" });
   };
   const onOver = (e: DragEvent) => {
     if (!hasFiles(e)) return;
     // Without this WebView2 refuses the drop — or navigates to the file.
     e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-    handler({ type: "over" });
+    const accepted = acceptFiles();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = accepted ? "copy" : "none";
+    if (accepted) handler({ type: "over" });
   };
   const onLeave = (e: DragEvent) => {
     if (!hasFiles(e) || depth === 0) return;
@@ -742,12 +748,22 @@ export async function onDragDrop(handler: (e: DragDropPayload) => void) {
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     depth = 0;
+    if (!acceptFiles()) return;
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) {
       handler({ type: "drop", paths: [] });
       return;
     }
-    webview.postMessageWithAdditionalObjects("nubo-file-drop", files);
+    // Snapshot the FileList while it is readable, then let WebView2 finish
+    // the native drop before the island copies a file or changes geometry.
+    const dropped = Array.from(files);
+    window.setTimeout(() => {
+      try {
+        webview.postMessageWithAdditionalObjects("nubo-file-drop", dropped);
+      } catch {
+        handler({ type: "drop", paths: [] });
+      }
+    }, 0);
   };
 
   window.addEventListener("dragenter", onEnter);

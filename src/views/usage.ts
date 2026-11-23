@@ -12,7 +12,7 @@
 import { Bridge } from "../core/bridge";
 import {
   PLAN_TEXT, claudeSubtitle, codexIsStale, codexResetsLabel, codexSubtitle, dominantPct,
-  effectivePct, parseCodexPlan, pillLabel, planColor, resetLabel,
+  effectivePct, parseCodexPlan, planColor, resetLabel,
   type CodexPlanUsage, type PlanUsage, type PlanWindow,
 } from "../core/plan";
 import { State } from "../core/state";
@@ -46,11 +46,11 @@ export function planCardOpen(): boolean {
 }
 
 const claudeColor = (now = Date.now()) => planColor(dominantPct(State.planUsage, now));
-const codexColor = (now = Date.now()) => planColor(dominantPct(State.codexPlanUsage, now));
+const CODEX_PLAN_COLOR = "#38BDF8";
 
 /** The colour of the open card's plan, which Nubo wears while it is open. */
 export function openPlanColor(): string {
-  return State.planDetailIsCodex ? codexColor() : claudeColor();
+  return State.planDetailIsCodex ? CODEX_PLAN_COLOR : claudeColor();
 }
 
 /** Closes the plan card (view, mode or focus changed). */
@@ -122,7 +122,11 @@ export interface PlanPill {
 
 /** One pill: colour dot and label, lit while hovered or while its card is open. */
 export function buildPlanPill(codex: boolean): PlanPill {
-  const label = h("span", { class: "plan-pill-label" });
+  const label = h("span", { class: "plan-pill-label", text: codex ? "Codex" : "Claude" });
+  const week = h("span", { class: "plan-pill-week" });
+  const hoursPct = h("span");
+  const hours = h("span", { class: "plan-pill-hours" },
+    svg(ICONS.timer, 10), h("span", { text: "5h" }), hoursPct);
   const dotEl = h("i", { class: "plan-pill-dot" });
   const isOpen = () => State.showingPlanDetail && State.planDetailIsCodex === codex;
   const el = h("button", {
@@ -135,24 +139,30 @@ export function buildPlanPill(codex: boolean): PlanPill {
       if (codex) refreshCodexPlanUsage();
       State.notify();
     },
-  }, dotEl, label);
+  }, dotEl, label, h("span", { class: "plan-pill-numbers" }, week, hours));
   return {
     el,
     sync() {
-      const color = codex ? codexColor() : claudeColor();
+      const usage = codex ? State.codexPlanUsage : State.planUsage;
+      const now = Date.now();
+      const color = codex ? CODEX_PLAN_COLOR : claudeColor(now);
       el.style.setProperty("--plan", color);
       el.classList.toggle("active", isOpen());
       dotEl.style.background = color;
-      label.textContent = codex
-        ? pillLabel("Codex", State.codexPlanUsage)
-        : pillLabel("Claude", State.planUsage);
+      const displayPct = (window?: PlanWindow) => window
+        ? String(Math.round(effectivePct(window, now))) + "%" : PLAN_TEXT.none;
+      week.textContent = displayPct(usage?.sevenDay);
+      week.title = PLAN_TEXT.week;
+      hours.hidden = !usage?.fiveHour;
+      hours.title = PLAN_TEXT.fiveHours;
+      hoursPct.textContent = displayPct(usage?.fiveHour);
     },
   };
 }
 
 // ── Card ──────────────────────────────────────────────────────────────────────
 
-function gaugeRow(label: string, w: PlanWindow | undefined, weekly: boolean, now: number): HTMLElement {
+function gaugeRow(label: string, w: PlanWindow | undefined, weekly: boolean, now: number, accent?: string): HTMLElement {
   const row = h("div", { class: "plan-row" }, h("span", { class: "plan-label", text: label }));
   if (!w) {
     row.append(h("span", { class: "plan-none", text: PLAN_TEXT.none }));
@@ -161,7 +171,7 @@ function gaugeRow(label: string, w: PlanWindow | undefined, weekly: boolean, now
   const pct = effectivePct(w, now);
   const fill = h("i", { class: "plan-fill" });
   fill.style.width = `${pct}%`;
-  fill.style.background = planColor(pct);
+  fill.style.background = accent ?? planColor(pct);
   row.append(
     h("span", { class: "plan-bar" }, fill),
     h("span", { class: "plan-pct", text: `${Math.round(pct)}%` }),
@@ -209,14 +219,14 @@ export class PlanCard {
   private drawCodex(u: CodexPlanUsage | null, now: number) {
     const rows = h("div", { class: "plan-rows" });
     // Codex plans without a 5-hour window show the week alone, as on the Mac.
-    if (u?.fiveHour) rows.append(gaugeRow(PLAN_TEXT.fiveHours, u.fiveHour, false, now));
+    if (u?.fiveHour) rows.append(gaugeRow(PLAN_TEXT.fiveHours, u.fiveHour, false, now, CODEX_PLAN_COLOR));
     rows.append(
-      gaugeRow(PLAN_TEXT.week, u?.sevenDay, true, now),
+      gaugeRow(PLAN_TEXT.week, u?.sevenDay, true, now, CODEX_PLAN_COLOR),
       h("div", { class: "plan-row" },
         h("span", { class: "plan-label", text: PLAN_TEXT.resets }),
         h("span", { class: "plan-credits", text: codexResetsLabel(u) }),
       ),
     );
-    this.el.append(head(codexColor(now), PLAN_TEXT.codexTitle, codexSubtitle(u, now)), rows);
+    this.el.append(head(CODEX_PLAN_COLOR, PLAN_TEXT.codexTitle, codexSubtitle(u, now)), rows);
   }
 }

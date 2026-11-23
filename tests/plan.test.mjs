@@ -246,7 +246,7 @@ test("an open card follows its pill, and Nubo wears that plan's colour", () => {
   State.settings.showCodexPlanInNotch = true;
   assert.equal(planCardOpen(), true);
   State.codexPlanUsage = { sevenDay: win(85, Date.now() / 1000 + 3600), updatedAt: Date.now() };
-  assert.equal(openPlanColor(), "#F4505E");
+  assert.equal(openPlanColor(), "#38BDF8");
 });
 
 test("the plan card opens via compact island setting on the overview", () => {

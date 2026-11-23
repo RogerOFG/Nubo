@@ -687,7 +687,7 @@ pub fn open_claude_desktop() -> bool {
                 exe.is_file() && Command::new(exe).spawn().is_ok()
             })
         },
-        activate_claude_protocol,
+        || activate_protocol("claude://"),
     )
 }
 
@@ -699,8 +699,9 @@ fn open_claude_with(
     focus() || squirrel() || protocol()
 }
 
-/// The MSIX manifest registers `claude`; let Windows resolve its current install.
-fn activate_claude_protocol() -> bool {
+/// Let Windows resolve the app that registered this desktop protocol.
+pub fn activate_protocol(uri: &str) -> bool {
+    let uri = HSTRING::from(uri);
     unsafe {
         let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         // A Tauri thread may already use MTA. Keep that apartment: the Shell can
@@ -712,7 +713,7 @@ fn activate_claude_protocol() -> bool {
             cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
             fMask: SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC,
             lpVerb: w!("open"),
-            lpFile: w!("claude://"),
+            lpFile: PCWSTR(uri.as_ptr()),
             nShow: SW_SHOWNORMAL.0,
             ..Default::default()
         };

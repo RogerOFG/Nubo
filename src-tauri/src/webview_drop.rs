@@ -40,21 +40,32 @@ pub fn install(app: &AppHandle) {
         };
         let handler = WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
             let Some(args) = args else { return Ok(()) };
-            // Tauri's own IPC messages come through here too; they carry no objects.
-            let Ok(args) = args.cast::<ICoreWebView2WebMessageReceivedEventArgs2>() else { return Ok(()) };
-            let Ok(objects) = args.AdditionalObjects() else { return Ok(()) };
-            let mut count = 0u32;
-            objects.Count(&mut count)?;
-            if count == 0 {
+            // Ignore WebView2 messages sent for other features.
+            let mut message = PWSTR::null();
+            if args.TryGetWebMessageAsString(&mut message).is_err()
+                || take_pwstr(message) != "nubo-file-drop"
+            {
                 return Ok(());
             }
             let mut paths = Vec::new();
-            for i in 0..count {
-                let Ok(file) = objects.GetValueAtIndex(i)?.cast::<ICoreWebView2File>() else { continue };
-                let mut path = PWSTR::null();
-                file.Path(&mut path)?;
-                paths.push(take_pwstr(path));
+            if let Ok(args) = args.cast::<ICoreWebView2WebMessageReceivedEventArgs2>() {
+                if let Ok(objects) = args.AdditionalObjects() {
+                    let mut count = 0u32;
+                    let _ = objects.Count(&mut count);
+                    for i in 0..count {
+                        let Ok(object) = objects.GetValueAtIndex(i) else { continue };
+                        let Ok(file) = object.cast::<ICoreWebView2File>() else { continue };
+                        let mut path = PWSTR::null();
+                        if file.Path(&mut path).is_ok() {
+                            let path = take_pwstr(path);
+                            if !path.is_empty() {
+                                paths.push(path);
+                            }
+                        }
+                    }
+                }
             }
+            drop(args);
             crate::files::allow_dropped(paths.iter().cloned());
             let _ = handle.emit_to(WINDOW_LABEL, "file-drag", FileDrop { kind: "drop", paths });
             Ok(())

@@ -17,7 +17,7 @@ import {
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { SPOTIFY_ID, Spotify, islandDances } from "../core/spotify";
-import { BotEngine, hexToRGB } from "../nubo/engine";
+import { BOT_STATES, BotEngine, hexToRGB } from "../nubo/engine";
 import { Greeting } from "../nubo/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../nubo/minibots";
 import { SeasonCache, parseOutfit } from "../nubo/wardrobe";
@@ -32,7 +32,7 @@ import { buildSessionDropList, type SessionDropList } from "../views/session-dro
 import { DROP_TEXT_RIGHT_WITH_LIST, dropTargetAt, dropTargets } from "../core/launch";
 import { IslandStateMachine } from "./fsm";
 import { refreshHookPills } from "./integrations";
-import { restoreAlertFocus } from "./hooks";
+import { CODEX_COMPLETION_SECONDS, restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
 import type { ViewCommand } from "./shortcuts";
 import { DRAG_THRESHOLD } from "../nubo/desktop-logic";
@@ -222,7 +222,6 @@ export class Island {
   private build() {
     const actions: ViewActions = {
       setView: (v) => this.setView(v),
-      cancelDrop: () => this.discardDrop(),
       collapse: () => this.collapse(),
       foldApproval: () => this.foldApproval(),
       setFocus: (id) => {
@@ -237,6 +236,7 @@ export class Island {
         const task = State.focusTask;
         // Sessions from the Claude desktop app live there, not in a terminal.
         if (task?.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
+        else if (task?.id === "agent_codex") void Bridge.openCodexDesktop(task.sessionId ?? null);
         else void Bridge.openSession(task?.sessionId ?? null, task?.sessionCwd ?? null);
       },
       // The ↗ button — same targets as openAgentTarget() on macOS.
@@ -252,6 +252,7 @@ export class Island {
           integration_calcom: "https://app.cal.com/bookings",
         };
         if (task.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
+        else if (task.id === "agent_codex") void Bridge.openCodexDesktop(task.sessionId ?? null);
         else if (task.id === "integration_claude" || task.sessionId) {
           void Bridge.openSession(task.sessionId ?? null, task.sessionCwd ?? null);
         } else if (task.id === "integration_n8n") void Bridge.openN8n();
@@ -382,15 +383,7 @@ export class Island {
 
     // The drop sequence draws the card, the bar and its own Nubo. It sits under
     // the header, which stays visible on top of it exactly as on macOS.
-    this.uploadCanvas = new UploadCanvas({
-      ask: () => {
-        State.promptContext = State.droppedFile
-          ? { kind: "file", name: State.droppedFile.name, path: State.droppedFile.path }
-          : null;
-        this.setView("prompt");
-      },
-      cancel: () => this.discardDrop(),
-    });
+    this.uploadCanvas = new UploadCanvas();
     this.sessionDrop = buildSessionDropList();
     this.uploadCanvas.el.append(this.sessionDrop.el);
 
@@ -431,6 +424,8 @@ export class Island {
   private wireFsm() {
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
     this.fsm.openOnHover = State.settings.openOnHover;
+    this.fsm.minimumHomeDelay = () => State.view === "finished" && State.focusId === "agent_codex"
+      ? CODEX_COMPLETION_SECONDS : 0;
     this.fsm.onTransition = (from, to) => {
       // The greeting is over, however it ended: back to his desktop spot.
       if (from === "nubo" && to !== "nubo") this.desktop.launch();
@@ -543,10 +538,12 @@ export class Island {
       State.notify();
       return;
     }
+    const leavingCodexCompletion = view !== "finished" && this.fsm.minimumHomeDelay() > 0;
     const grew = VIEW_LAYOUTS[view].height >= VIEW_LAYOUTS[State.view].height;
     State.view = view;
     State.lastActivity = performance.now();
     this.animateGeometry(!grew);
+    if (leavingCodexCompletion && !this.wasInIsland) this.fsm.mouseLeft();
     State.notify();
   }
 
@@ -569,6 +566,7 @@ export class Island {
     this.fsm.pinned = State.isPinned;
     this.fsm.forceHome();
     this.expand(view);
+    if (this.fsm.minimumHomeDelay() > 0 && !this.wasInIsland) this.fsm.mouseLeft();
   }
 
   /** A new Nubo waits and Nubo has nothing else to say (he is blue). */
@@ -683,7 +681,7 @@ export class Island {
 
   private onDragDrop(e: DragDropPayload) {
     if (e.type !== "over") void Bridge.log(`drag ${e.type} ${e.paths?.length ?? 0} file(s)`);
-    if (State.paused) return;
+    if (State.paused || State.shelfDragging) return;
     if (this.dragLeaveTimer != null && e.type !== "leave") {
       window.clearTimeout(this.dragLeaveTimer);
       this.dragLeaveTimer = null;
@@ -738,13 +736,13 @@ export class Island {
           this.dropIntoSession(target, e.paths);
           return;
         }
-        const path = e.paths?.[0];
-        if (!path) {
+        const paths = e.paths;
+        if (!paths?.length) {
           this.engine.animateMorph(0);
           this.setView(State.defaultView());
           return;
         }
-        this.swallow(path);
+        this.swallow(paths);
         break;
       }
     }
@@ -791,53 +789,55 @@ export class Island {
    * the inbox runs in the background and swaps the path in when it lands, so a
    * slow disk can never stall the animation — same as FileDropHandler on macOS.
    */
-  private swallow(path: string) {
-    const name = path.split(/[\\/]/).pop() || "file";
-    State.droppedFile = { name, path };
-    State.promptContext = { kind: "file", name, path };
-    State.chatHistory = [];
-    void Bridge.chatReset();
+  private swallow(paths: string[]) {
+    if (!UploadSeq.isActive || UploadSeq.dropped) {
+      UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
+    }
+    const entries = paths.map((path) => ({
+      name: path.split(/[\\/]/).pop() || "file",
+      path,
+      ready: false,
+    }));
+    State.shelfError = "";
+    State.shelfFiles.push(...entries);
+    State.droppedFile = entries[0];
 
     UploadSeq.performDrop(State.uploadDuration);
     this.uploadTens = 0;
     this.uploadDone = false;
-
     this.engine.gulp();
     Sound.play("approve");
     this.engine.triggerEmote("happy");
     this.engine.animateMorph(0);
 
     State.uploadProgress = 0;
-    // The island does not fold while the file is being taken in; the pin is let
-    // go at the "choose" card, or when the flow is left.
     this.fsm.pinned = true;
     this.fsm.cancelTimers();
     this.setView("uploading");
     this.ensureRunning();
     this.watchSequence();
+    void this.ingestShelfFiles(entries);
+  }
 
-    void Bridge.ingestFile(path)
-      .then((file) => {
-        // Cancelled (or replaced by another drop) while the copy was running.
-        if (State.droppedFile?.path !== path) return;
-        State.droppedFile = { name: file.name, path: file.path };
-        State.promptContext = { kind: "file", name: file.name, path: file.path };
-        State.notify();
-      })
-      .catch((err) => {
-        if (State.droppedFile?.path !== path) return;
-        UploadSeq.deactivate();
-        this.releaseDropPin();
-        State.noteMessage = String(err).replace(/^Error:\s*/, "");
-        this.engine.animateMorph(0);
-        this.setView("note");
+  private async ingestShelfFiles(entries: typeof State.shelfFiles) {
+    for (const entry of entries) {
+      try {
+        const file = await Bridge.ingestFile(entry.path);
+        if (!State.shelfFiles.includes(entry)) continue;
+        entry.path = file.path;
+        entry.name = file.name;
+        entry.ready = true;
+      } catch (err) {
+        if (!State.shelfFiles.includes(entry)) continue;
+        State.shelfFiles = State.shelfFiles.filter((file) => file !== entry);
+        State.shelfError = t("Could not add {name}: {error}", {
+          name: entry.name,
+          error: String(err).replace(/^Error:\s*/, ""),
+        });
         Sound.play("error");
-        window.setTimeout(() => {
-          // Only the note still on screen: setView would reopen a folded island
-          // and replace a view the user opened since.
-          if (State.mode === "expanded" && State.view === "note") this.setView(State.defaultView());
-        }, 2400);
-      });
+      }
+      State.notify();
+    }
   }
 
   private sequenceWatch: number | null = null;
@@ -867,16 +867,9 @@ export class Island {
     if (!this.fsm.pinned && !this.wasInIsland && this.fsm.state === "home") this.fsm.mouseLeft();
   }
 
-  /** "Cancel" on the dropped file: forget it, so the chat does not pick it up. */
-  private discardDrop() {
-    State.droppedFile = null;
-    State.promptContext = null;
-    this.setView(State.defaultView());
-  }
-
   /**
    * Sounds and view changes hung off the canvas timeline: a `tick` every 10 %,
-   * the ✓ chime when the bar completes, then `choose` once Nubo has grown back.
+   * the ✓ chime when the bar completes, then the shelf once Nubo has grown back.
    */
   private stepSequence() {
     const since = UploadSeq.sinceDrop();
@@ -899,9 +892,10 @@ export class Island {
       Sound.play("approve");
       this.engine.triggerEmote("happy");
     }
-    // The extra second is the grow-back, after which the choose card is up.
+    // The extra second is the grow-back, before the shelf is visible.
     if (since >= PRE_PROGRESS + dur + 1 && State.view === "uploading") {
-      this.setView("choose");
+      UploadSeq.deactivate();
+      this.setView("upload");
       this.releaseDropPin();
     }
   }
@@ -1212,7 +1206,7 @@ export class Island {
       State.lastActivity = performance.now();
     });
 
-    void onDragDrop((e) => this.onDragDrop(e));
+    void onDragDrop((e) => this.onDragDrop(e), () => !State.paused && !State.shelfDragging);
 
     // Outside Tauri (plain browser) drive the cursor from DOM events so the
     // island can be inspected with `npm run dev`.
@@ -1277,6 +1271,7 @@ export class Island {
     if (!inIsland && wasIn) {
       this.fsm.mouseLeft();
     }
+    if (inIsland !== wasIn) this.updateCountdown(performance.now());
 
     // Bot hover → love
     const overBot = State.mode === "expanded" && State.stateOverride == null && this.isBotHit(x, y);
@@ -1444,7 +1439,8 @@ export class Island {
   };
 
   private updateBotTargets() {
-    let p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
+    const shelfVisible = State.view === "upload" && (State.shelfFiles.length > 0 || State.shelfError);
+    let p = botPosition(State.mode, shelfVisible ? "choose" : State.view, this.height.value, State.uploadProgress);
     // The closed island with Nubo in it, as on a Mac without a notch.
     if (State.mode === "hidden" && closedIsland(State.settings.closedIsland) === "nubo") {
       p = { cx: this.width.value / 2, cy: this.height.value / 2, diameter: CLOSED_BOT_D, opacity: 1 };
@@ -1568,19 +1564,38 @@ export class Island {
     return -Math.tanh((State.mouse.y - this.botCy.value) / 200);
   }
 
+  private countdownDueAt: number | null = null;
+  private countdownAnimation: Animation | null = null;
+  private countdownColor = "";
+
   private updateCountdown(nowMs: number) {
-    // The state machine's own deadline, so the bar follows an auto-close delay
-    // edited while the countdown runs.
-    const dueAt = this.fsm.homeCollapseDueAt;
-    if (State.mode !== "expanded" || State.isPinned || dueAt == null) {
-      this.countdown.style.width = "0px";
-      return;
+    const dueAt = State.mode === "expanded" && !this.fsm.pinned
+      ? this.fsm.homeCollapseDueAt : null;
+    if (dueAt !== this.countdownDueAt) {
+      this.countdownDueAt = dueAt;
+      this.countdownAnimation?.cancel();
+      this.countdownAnimation = null;
+      if (dueAt != null && dueAt > nowMs) {
+        const remaining = dueAt - nowMs;
+        const duration = this.fsm.homeCollapseDurationMs;
+        const scale = clamp(remaining / duration, 0, 1);
+        this.countdownAnimation = this.countdown.animate(
+          [{ transform: "scaleX(" + scale + ")" }, { transform: "scaleX(0)" }],
+          { duration: remaining, fill: "forwards" },
+        );
+      }
     }
-    const autoClose = this.fsm.homeToPetitDelay;
-    const windowS = Math.min(10, autoClose * 0.6);
-    const remaining = (dueAt - nowMs) / 1000;
-    this.countdown.style.width =
-      remaining < windowS ? `${Math.max(0, clamp(remaining / windowS, 0, 1) * 160)}px` : "0px";
+    if (dueAt != null) {
+      const state = BOT_STATES[State.effectiveState];
+      const rgb = this.engine.bodyColor ?? (state.tint > 0 ? state.color : null);
+      const color = rgb
+        ? "rgb(" + rgb.map((channel) => Math.round(channel * 255)).join(" ") + ")"
+        : "#8B7CF7";
+      if (color !== this.countdownColor) {
+        this.countdownColor = color;
+        this.countdown.style.setProperty("--countdown-color", color);
+      }
+    }
   }
 
   // ── DOM sync ────────────────────────────────────────────────────────────────

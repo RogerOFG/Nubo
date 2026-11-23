@@ -128,7 +128,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const hookPill = def?.connect.kind === "hooks";
   if (isComingSoon(task.id) || def?.connect.kind === "none") {
     // Nothing to set up, and nothing to refresh.
-  } else if (configured && (hookPill || def?.category !== "ai")) {
+  } else if (configured && task.id !== "agent_codex" && (hookPill || def?.category !== "ai")) {
     actions.append(
       h("button", {
         class: "link-btn",

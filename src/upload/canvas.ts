@@ -125,7 +125,7 @@ export class UploadCanvas {
   textRight: number = TEXT_RIGHT;
   readonly defaultTextRight: number = TEXT_RIGHT;
 
-  constructor(actions: UploadCanvasActions) {
+  constructor(actions?: UploadCanvasActions) {
     this.canvas = document.createElement("canvas");
     this.canvas.id = "upload-canvas";
 
@@ -143,7 +143,7 @@ export class UploadCanvas {
     };
     this.overlay = document.createElement("div");
     this.overlay.id = "upload-overlay";
-    this.overlay.append(mk(ASK_BTN.x, ASK_BTN.w, actions.ask), mk(CANCEL_BTN.x, CANCEL_BTN.w, actions.cancel));
+    if (actions) this.overlay.append(mk(ASK_BTN.x, ASK_BTN.w, actions.ask), mk(CANCEL_BTN.x, CANCEL_BTN.w, actions.cancel));
 
     this.el = document.createElement("div");
     this.el.id = "upload-layer";
@@ -215,7 +215,7 @@ export class UploadCanvas {
 
     if (f.zoneAlpha > 0 && f.textAlpha > 0) this.drawDropText(ctx, f);
     if (f.barAlpha > 0 || f.barReveal > 0) this.drawProgressBar(ctx, f);
-    if (f.chooseAlpha > 0) this.drawChoose(ctx, f);
+    if (f.chooseAlpha > 0 && this.overlay.childElementCount) this.drawChoose(ctx, f);
 
     this.drawNubo(ctx, f);
     if (f.fileVisible) this.drawFile(ctx, f);

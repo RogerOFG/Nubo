@@ -370,6 +370,30 @@ fn open_claude_desktop() -> bool {
     platform::open_claude_desktop()
 }
 
+/// Opens the Codex desktop protocol, targeting a local chat when known.
+#[tauri::command]
+fn open_codex_desktop(session_id: Option<String>) -> bool {
+    let thread = session_id.as_deref().filter(|id| {
+        id.len() == 36 && id.bytes().enumerate().all(|(index, byte)| {
+            match index {
+                8 | 13 | 18 | 23 => byte == b'-',
+                _ => byte.is_ascii_hexdigit(),
+            }
+        })
+    });
+    let uri = thread.map_or_else(|| "codex://".to_string(), |id| format!("codex://threads/{id}"));
+    #[cfg(windows)]
+    return platform::activate_protocol(&uri);
+    #[cfg(target_os = "linux")]
+    {
+        if !platform::handles_scheme("codex") {
+            return false;
+        }
+        platform::open_url(&uri);
+        true
+    }
+}
+
 /// The file behind a live diff, if it may be handed to the editor: an existing
 /// regular file given by its full path. Anything else — a relative path, a
 /// folder, a path `code` could read as an option — goes no further.
@@ -610,8 +634,16 @@ fn chat_reset(chat: State<Chat>) {
 
 /// Copies a dropped file into the inbox and reports its name back.
 #[tauri::command]
-fn ingest_file(path: String) -> Result<DroppedFile, String> {
-    files::ingest(&path)
+async fn ingest_file(path: String) -> Result<DroppedFile, String> {
+    tauri::async_runtime::spawn_blocking(move || files::ingest(&path))
+        .await.map_err(|error| error.to_string())?
+}
+
+#[cfg(windows)]
+#[tauri::command]
+async fn drag_shelf_file(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || files::drag_out(&path))
+        .await.map_err(|error| error.to_string())?
 }
 
 /// The island may only ask whether a key exists — never read it.
@@ -943,6 +975,7 @@ pub fn run() {
             launch::pick_folder,
             launch::drop_into_session,
             open_claude_desktop,
+            open_codex_desktop,
             open_file_in_vscode,
             quit_app,
             hooks_status,
@@ -969,6 +1002,8 @@ pub fn run() {
             local_set_key,
             chat_reset,
             ingest_file,
+            #[cfg(windows)]
+            drag_shelf_file,
             secret_present,
             claude_ready,
             subscription_status,

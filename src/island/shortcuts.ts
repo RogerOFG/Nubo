@@ -94,6 +94,7 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
     case "jumpToTerminal": {
       const task = State.focusTask;
       if (task?.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
+      else if (task?.id === "agent_codex") void Bridge.openCodexDesktop(task.sessionId ?? null);
       else void Bridge.openSession(task?.sessionId ?? null, task?.sessionCwd ?? null);
       if (State.mode === "expanded") host.collapse();
       break;
@@ -166,8 +167,7 @@ export function runIslandKey(host: ShortcutHost, action: IslandKeyAction) {
       // Not while an answer is on its way: it would land in the new chat.
       if (State.stateOverride === "thinking") return;
       State.chatHistory = [];
-      State.droppedFile = null;
-      State.promptContext = null;
+      State.promptFile = null;
       void Bridge.chatReset();
       Sound.play("blip");
       host.setView("prompt");

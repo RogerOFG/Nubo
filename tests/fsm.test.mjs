@@ -400,3 +400,21 @@ test("open on hover: an island opened by an alert keeps the normal delay", () =>
   seconds(2);
   assert.equal(fsm.state, "petit");
 });
+
+test("a completion can stay visible for ten seconds with the normal close set to one", () => {
+  fsm.homeToPetitDelay = 1;
+  fsm.minimumHomeDelay = () => 10;
+  fsm.forceHome();
+  fsm.mouseLeft();
+  assert.equal(fsm.homeCollapseDurationMs, 10_000);
+  seconds(9.9);
+  assert.equal(fsm.state, "home");
+  seconds(0.1);
+  assert.equal(fsm.state, "petit");
+
+  fsm.minimumHomeDelay = () => 0;
+  fsm.forceHome();
+  fsm.mouseLeft();
+  seconds(1);
+  assert.equal(fsm.state, "petit");
+});

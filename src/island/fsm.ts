@@ -55,6 +55,8 @@ export class IslandStateMachine {
    * bar from it.
    */
   homeCollapseDueAt: number | null = null;
+  homeCollapseDurationMs = 0;
+  minimumHomeDelay: () => number = () => 0;
 
   private homeDelay = 15;
   private byHover = false;
@@ -181,7 +183,9 @@ export class IslandStateMachine {
   private scheduleHomeCollapse() {
     this.clear("homeCollapse");
     if (this.pinned) return;
-    const ms = (this.byHover ? this.hoverCloseDelay : this.homeDelay) * 1000;
+    const delay = this.byHover ? this.hoverCloseDelay : this.homeDelay;
+    const ms = Math.max(delay, this.minimumHomeDelay()) * 1000;
+    this.homeCollapseDurationMs = ms;
     this.homeCollapseDueAt = performance.now() + ms;
     this.homeCollapse = window.setTimeout(() => {
       this.homeCollapse = null;

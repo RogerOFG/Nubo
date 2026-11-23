@@ -35,6 +35,7 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  sessionTurnId?: string;
   /** Claude Code's session, so "Open terminal" can find the window it runs in. */
   sessionId?: string | null;
   /** Claude's final message after Stop, one line; cleared when a new turn starts. */
@@ -240,7 +241,10 @@ class AppState {
   /** The session pill a dragged file is over on the drop card (Mac dropSessionTarget). */
   dropSessionTarget: string | null = null;
 
-  promptContext: PromptContext | null = null;
+  shelfFiles: { name: string; path: string; ready: boolean }[] = [];
+  shelfDragging = false;
+  shelfError = "";
+  promptFile: { name: string; path: string } | null = null;
   droppedFile: { name: string; path: string } | null = null;
   noteMessage: string | null = null;
   searchResult: SearchResult | null = null;

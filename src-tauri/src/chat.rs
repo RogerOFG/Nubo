@@ -8,6 +8,7 @@
 
 use std::sync::Mutex;
 
+use crate::files::is_inside;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::AppHandle;
@@ -191,14 +192,6 @@ fn checked_context(context: ChatContext) -> Result<ChatContext, String> {
         }
         other => Ok(other),
     }
-}
-
-/// True when `path` is a regular file directly inside `dir`, both resolved
-/// (no `..`, no symlink pointing out of it).
-fn is_inside(dir: &std::path::Path, path: &std::path::Path) -> bool {
-    let (Ok(dir), Ok(file)) = (dir.canonicalize(), path.canonicalize()) else { return false };
-    file.parent() == Some(dir.as_path())
-        && std::fs::symlink_metadata(&file).map(|m| m.is_file()).unwrap_or(false)
 }
 
 /// One chat turn with the provider chosen in the settings.

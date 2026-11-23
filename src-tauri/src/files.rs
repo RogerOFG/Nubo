@@ -62,6 +62,8 @@ fn take_dropped(path: &str) -> bool {
     }
 }
 
+static INBOX_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn ingest(source: &str) -> Result<DroppedFile, String> {
     if !take_dropped(source) {
         return Err(crate::i18n::t("Only files dropped on the island can be added."));
@@ -73,6 +75,7 @@ pub fn ingest(source: &str) -> Result<DroppedFile, String> {
         return Err(crate::i18n::t("Folders can't be dropped yet."));
     }
 
+    let _guard = INBOX_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let dir = inbox_dir();
     crate::platform::ensure_private_dir(&settings::local_dir()).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -86,7 +89,7 @@ pub fn ingest(source: &str) -> Result<DroppedFile, String> {
     if dest.exists() {
         let stem = src.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         let ext = src.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
-        for i in 2..1000 {
+        for i in 2u64.. {
             let candidate = dir.join(format!("{stem} ({i}){ext}"));
             if !candidate.exists() {
                 dest = candidate;
@@ -95,7 +98,10 @@ pub fn ingest(source: &str) -> Result<DroppedFile, String> {
         }
     }
 
-    std::fs::copy(src, &dest).map_err(|e| crate::i18n::tf("Cannot copy: {error}", &[("error", &e.to_string())]))?;
+    if let Err(error) = std::fs::copy(src, &dest) {
+        let _ = std::fs::remove_file(&dest);
+        return Err(crate::i18n::tf("Cannot copy: {error}", &[("error", &error.to_string())]));
+    }
     // CopyFileEx carries the source's timestamps across, so a file last edited
     // three years ago would arrive already older than the sweep window and be
     // deleted on the spot. The inbox ages from when *we* copied it.
@@ -124,6 +130,45 @@ fn sweep(dir: &Path) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+/// True when `path` is a regular file directly inside `dir`, both resolved
+/// (no `..`, no symlink pointing out of it).
+pub(crate) fn is_inside(dir: &std::path::Path, path: &std::path::Path) -> bool {
+    let (Ok(dir), Ok(file)) = (dir.canonicalize(), path.canonicalize()) else { return false };
+    file.parent() == Some(dir.as_path())
+        && std::fs::symlink_metadata(&file).map(|m| m.is_file()).unwrap_or(false)
+}
+
+/// Starts an OLE copy drag so Explorer and other apps receive a real file.
+#[cfg(windows)]
+pub fn drag_out(path: &str) -> Result<(), String> {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::System::Com::{IBindCtx, IDataObject};
+    use windows::Win32::System::Ole::{OleInitialize, OleUninitialize, DROPEFFECT_COPY, IDropSource};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+    use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, SHDoDragDrop, BHID_DataObject};
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
+
+    if !is_inside(&inbox_dir(), Path::new(path)) {
+        return Err(crate::i18n::t("Only files dropped on the island can be dragged out."));
+    }
+    let path = HSTRING::from(path);
+    let result = unsafe {
+        OleInitialize(None).map_err(|error| error.to_string())?;
+        let result = (|| {
+            let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(path.as_ptr()), None::<&IBindCtx>)?;
+            let data: IDataObject = item.BindToHandler(None::<&IBindCtx>, &BHID_DataObject)?;
+            let button = if GetSystemMetrics(SM_SWAPBUTTON) != 0 { VK_RBUTTON } else { VK_LBUTTON };
+            if GetAsyncKeyState(button.0.into()) < 0 {
+                SHDoDragDrop(None, &data, None::<&IDropSource>, DROPEFFECT_COPY)?;
+            }
+            Ok::<(), windows::core::Error>(())
+        })();
+        OleUninitialize();
+        result
+    };
+    result.map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

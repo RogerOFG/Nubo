@@ -9,7 +9,7 @@ import { State, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../nubo/minibots";
 import { buildPrompt } from "./chat";
-import { buildChoose, buildUpload, buildUploading } from "./upload";
+import { buildUpload, buildUploading } from "./upload";
 import { buildSnippets } from "./snippets";
 import { buildTasks } from "./tasks";
 import { setLyricsBack } from "../core/lyrics";
@@ -40,7 +40,6 @@ import type { ViewCommand } from "../island/shortcuts";
 export interface ViewActions {
   setView(v: IslandViewName): void;
   /** "Cancel" on a dropped file: forgets it and goes back home. */
-  cancelDrop(): void;
   collapse(): void;
   /** Folds a waiting card to the compact island without answering it. */
   foldApproval(): void;
@@ -760,9 +759,12 @@ function buildFinished(actions: ViewActions): ViewHost {
       who.append(agentWho(State.focusTask, agent ? t("finished") : t("Claude Code finished")));
       // The final message, else the last step that is not a diff (FinishedView).
       const task = State.focusTask;
-      title.textContent = task?.finalLine || (task && lastTextStep(task.steps)) || t("Session finished");
+      title.textContent = task?.finalLine || (task?.id === "agent_codex"
+        ? t("Done")
+        : (task && lastTextStep(task.steps)) || t("Session finished"));
       // Sessions from the Claude desktop app live there, not in a terminal.
-      const label = task?.id === "agent_claude-desktop" ? t("Open Claude") : t("Open terminal");
+      const label = task?.id === "agent_codex" ? t("Open Codex")
+        : task?.id === "agent_claude-desktop" ? t("Open Claude") : t("Open terminal");
       const span = open.firstElementChild as HTMLElement;
       if (span.textContent !== label) span.textContent = label;
     },
@@ -803,9 +805,15 @@ function buildSettings(actions: ViewActions): ViewHost {
     oninput: (e: Event) => actions.setVolume(Number((e.target as HTMLInputElement).value)),
   }) as HTMLInputElement;
   const autoLabel = h("span", {});
-  const segButtons = [10, 15, 30].map((s) =>
-    h("button", { onclick: () => actions.setAutoClose(s) }, `${s}s`),
-  );
+  const showAutoClose = (seconds: number) => {
+    autoLabel.textContent = t("Auto-close · {seconds}s", { seconds });
+  };
+  const autoClose = h("input", {
+    class: "auto-close-range", type: "range", min: "1", max: "120", step: "1",
+    "aria-label": tl("Auto-close"),
+    oninput: () => showAutoClose(Number(autoClose.value)),
+    onchange: () => actions.setAutoClose(Number(autoClose.value)),
+  });
   const claudeBadge = h("span", { class: "status-badge" });
   const apiBadge = h("span", { class: "status-badge" });
 
@@ -818,7 +826,7 @@ function buildSettings(actions: ViewActions): ViewHost {
       { class: "settings-row" },
       svg(ICONS.timer, 12),
       autoLabel,
-      h("div", { class: "seg" }, ...segButtons),
+      autoClose,
     ),
     h(
       "div",
@@ -845,8 +853,8 @@ function buildSettings(actions: ViewActions): ViewHost {
       soundSwitch.classList.toggle("on", s.soundEnabled);
       volume.value = String(s.soundVolume);
       volume.style.opacity = s.soundEnabled ? "1" : "0.4";
-      autoLabel.textContent = t("Auto-close · {seconds}s", { seconds: Math.round(s.autoCloseInterval) });
-      segButtons.forEach((b, i) => b.classList.toggle("on", s.autoCloseInterval === [10, 15, 30][i]));
+      if (document.activeElement !== autoClose) autoClose.value = String(s.autoCloseInterval);
+      showAutoClose(Number(autoClose.value));
       clear(claudeBadge);
       claudeBadge.append(
         dot(s.hooksInstalled ? "#22C55E" : "#F4505E", 6),
@@ -887,9 +895,8 @@ export function buildViews(
   map.set("note", buildNote());
   map.set("settings", buildSettings(actions));
   map.set("prompt", buildPrompt(onChatHeightChange));
-  map.set("upload", buildUpload());
+  map.set("upload", buildUpload(actions));
   map.set("uploading", buildUploading());
-  map.set("choose", buildChoose(actions));
   map.set("recap", buildRecap(actions));
   map.set("wardrobe", buildWardrobe(actions));
   map.set("update", buildUpdate());

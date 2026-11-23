@@ -1,10 +1,7 @@
-// Drop zone, upload progress and the "what do you want to do with it" card —
-// ports of UploadView / UploadingView / ChooseView from IslandViewContent.swift.
-//
-// Sending a file by email is not in the Windows v1, so `choose` offers the one
-// action the spec asks for: ask a question about it.
-
-import { h, clear } from "./dom";
+import { h, clear, svg } from "./dom";
+import { Bridge } from "../core/bridge";
+import { HOST_OS } from "../core/pills";
+import { ICONS } from "./icons";
 import { State } from "../core/state";
 import type { ViewActions, ViewHost } from "./views";
 import { N_, t, tl } from "../i18n/i18n";
@@ -28,7 +25,7 @@ export function dashedFrame(): SVGSVGElement {
   return el;
 }
 
-export function buildUpload(): ViewHost {
+export function buildUpload(actions: ViewActions): ViewHost {
   const frame = dashedFrame();
   const title = h("div", { class: "drop-title", text: tl("Drop your files here") });
   const tags = h(
@@ -36,11 +33,26 @@ export function buildUpload(): ViewHost {
     { class: "drop-tags" },
     ...[N_("PDF"), N_("Images"), N_("Code"), N_("Docs")].map((chip) => h("span", { text: tl(chip) })),
   );
+  const empty = h("div", { class: "drop-body" }, title, tags);
+  const list = h("div", { class: "shelf-list" });
+  const error = h("div", { class: "shelf-error", role: "status" });
+  const clearAll = h("button", {
+    class: "shelf-clear", text: tl("Clear all"),
+    onclick: () => {
+      State.shelfFiles = [];
+      State.shelfError = "";
+      State.notify();
+    },
+  });
+  const shelf = h("div", { class: "shelf" },
+    h("div", { class: "shelf-head" }, h("b", { text: tl("Drop your files here") }), clearAll),
+    list, error);
+  let lastKey = "";
   const card = h(
     "div",
     { class: "card drop-card" },
     frame,
-    h("div", { class: "drop-body" }, title, tags),
+    empty, shelf,
   );
   const el = h("div", { class: "view" }, card);
 
@@ -48,6 +60,82 @@ export function buildUpload(): ViewHost {
     el,
     sync() {
       card.classList.toggle("over", State.fileDragOver);
+      const emptyShelf = State.shelfFiles.length === 0 && !State.shelfError;
+      empty.hidden = !emptyShelf;
+      frame.style.display = emptyShelf ? "" : "none";
+      shelf.hidden = emptyShelf;
+      clearAll.hidden = State.shelfFiles.length === 0 && !State.shelfError;
+      error.textContent = State.shelfError;
+      error.hidden = !State.shelfError;
+      const key = JSON.stringify([State.shelfFiles, State.stateOverride === "thinking"]);
+      if (lastKey === key) return;
+      lastKey = key;
+      const scroll = list.scrollTop;
+      clear(list);
+      for (const entry of State.shelfFiles) {
+        const item = h("div", { class: entry.ready ? "shelf-file ready" : "shelf-file", title: entry.name },
+          svg(ICONS.doc, 14), h("span", { text: entry.name }));
+        if (entry.ready) {
+          if (HOST_OS === "windows") {
+            item.addEventListener("pointerdown", (start) => {
+              if (start.button !== 0 || !start.isPrimary || State.shelfDragging) return;
+              start.preventDefault();
+              const gesture = new AbortController();
+              const end = () => gesture.abort();
+              const options = { signal: gesture.signal };
+              window.addEventListener("pointerup", end, options);
+              window.addEventListener("pointercancel", end, options);
+              window.addEventListener("blur", end, options);
+              document.documentElement.addEventListener("pointerleave", end, options);
+              window.addEventListener("pointermove", (e) => {
+                if (e.pointerId !== start.pointerId) return;
+                if (!(e.buttons & 1) || !item.isConnected) {
+                  end();
+                  return;
+                }
+                if (Math.hypot(e.clientX - start.clientX, e.clientY - start.clientY) < 6) return;
+                end();
+                if (State.shelfDragging) return;
+                State.shelfDragging = true;
+                void Bridge.dragShelfFile(entry.path)
+                  .catch((err) => { State.shelfError = String(err).replace(/^Error:\s*/, ""); })
+                  .finally(() => {
+                    State.shelfDragging = false;
+                    State.notify();
+                  });
+              }, options);
+            });
+          } else {
+            item.draggable = true;
+            item.addEventListener("dragstart", (e) => {
+              if (!e.dataTransfer) return;
+              e.dataTransfer.effectAllowed = "copy";
+              const uri = "file://" + entry.path.split("/").map(encodeURIComponent).join("/");
+              e.dataTransfer.setData("text/uri-list", uri);
+              State.shelfDragging = true;
+            });
+            item.addEventListener("dragend", () => { State.shelfDragging = false; });
+          }
+        }
+        const ask = h("button", {
+          class: "file-action", title: tl("Ask a question"), "aria-label": tl("Ask a question"),
+          disabled: !entry.ready || State.stateOverride === "thinking",
+          onclick: () => {
+            if (State.stateOverride === "thinking") return;
+            State.promptFile = { name: entry.name, path: entry.path };
+            actions.setView("prompt");
+          },
+        }, svg(ICONS.bubbleRound, 14));
+        const remove = h("button", {
+          class: "file-action", title: tl("Remove file"), "aria-label": tl("Remove file"),
+          onclick: () => {
+            State.shelfFiles = State.shelfFiles.filter((file) => file !== entry);
+            State.notify();
+          },
+        }, svg(ICONS.xmark, 13));
+        list.append(h("div", { class: "shelf-row" }, item, ask, remove));
+      }
+      list.scrollTop = scroll;
     },
   };
 }
@@ -80,45 +168,6 @@ export function buildUploading(): ViewHost {
       glow.style.transform = `translateX(${Math.max(0, w - 14)}px)`;
       glow.style.opacity = State.uploadProgress > 0.01 ? "1" : "0";
       card.classList.toggle("done", done);
-    },
-  };
-}
-
-export function buildChoose(actions: ViewActions): ViewHost {
-  const title = h("div", { class: "title" });
-  const sub = h("div", { class: "sub", text: tl("What do you want to do with it?") });
-  const row = h(
-    "div",
-    { class: "actions" },
-    h("button", {
-      class: "btn primary",
-      text: tl("Ask a question"),
-      onclick: () => actions.setView("prompt"),
-    }),
-    h("button", {
-      class: "btn secondary",
-      text: tl("Cancel"),
-      onclick: () => actions.cancelDrop(),
-    }),
-  );
-  const el = h(
-    "div",
-    { class: "view" },
-    h(
-      "div",
-      { class: "card" },
-      h("div", { class: "stack", style: "padding:0 18px 0 98px" }, title, sub, row),
-    ),
-  );
-
-  return {
-    el,
-    sync() {
-      clear(title);
-      title.append(
-        h("b", { text: State.droppedFile?.name ?? t("file") }),
-        document.createTextNode(t(" is ready.")),
-      );
     },
   };
 }

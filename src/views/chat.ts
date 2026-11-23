@@ -61,7 +61,15 @@ function typingDots(): HTMLElement {
 
 /** The coloured chip showing what the question is about (a dropped file). */
 function contextChip(label: string): HTMLElement {
-  const chip = h("div", { class: "chip" }, h("i", { class: "chip-dot" }), h("span", { text: label }));
+  const remove = h("button", {
+    class: "file-action", title: tl("Remove attachment"), "aria-label": tl("Remove attachment"),
+    onclick: () => {
+      State.promptFile = null;
+      State.notify();
+    },
+  }, svg(ICONS.xmark, 12));
+  const chip = h("div", { class: "chip" }, h("i", { class: "chip-dot" }),
+    h("span", { text: label, title: label }), remove);
   requestAnimationFrame(() => chip.classList.add("settled"));
   return chip;
 }
@@ -301,21 +309,25 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     drawModelButton();
     Sound.play("send");
 
+    const file = State.promptFile;
+    const context: ChatContext | null = file ? { kind: "file", ...file } : null;
+    if (file) {
+      State.promptFile = null;
+      State.chatHistory = [];
+    }
     State.chatHistory.push({ id: nextId++, role: "user", content: query });
     State.stateOverride = "thinking";
     State.notify();
     onHeightChange();
 
-    const file = State.droppedFile;
-    const context: ChatContext | null =
-      State.chatHistory.length === 1 && file ? { kind: "file", name: file.name, path: file.path } : null;
-
     try {
+      if (file) await Bridge.chatReset();
       const reply = await Bridge.chatSend(query, context, MailChat.on && HOST_OS === "windows");
       State.chatHistory.push({ id: nextId++, role: "assistant", content: reply.text });
       State.stateOverride = null;
       Sound.play("finish");
     } catch (err) {
+      if (file) State.promptFile = file;
       State.stateOverride = null;
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
       State.view = "note";
@@ -353,12 +365,12 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   return {
     el,
     sync() {
-      const file = State.droppedFile;
-      const wantChip = file?.name ?? "";
+      const file = State.promptFile;
+      const wantChip = file?.path ?? "";
       if (chipRow.dataset.label !== wantChip) {
         chipRow.dataset.label = wantChip;
         clear(chipRow);
-        if (wantChip) chipRow.append(contextChip(wantChip));
+        if (file) chipRow.append(contextChip(file.name));
       }
 
       const thinking = State.stateOverride === "thinking";

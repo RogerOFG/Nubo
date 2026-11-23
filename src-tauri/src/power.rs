@@ -46,6 +46,14 @@ pub fn watch(app: tauri::AppHandle) {
                 recompose(&app);
                 std::thread::sleep(Duration::from_millis(400));
                 let _ = app.emit("system-resumed", ());
+                // After a hibernation the graphics card and the lock screen can take
+                // longer than that to be back, and the first pass then draws nothing:
+                // the island stayed a black block. Two more passes, later.
+                for (wait, pass) in [(8u64, 2), (20, 3)] {
+                    std::thread::sleep(Duration::from_secs(wait));
+                    crate::log::line(format!("power: pass {pass}: the windows compose again"));
+                    recompose(&app);
+                }
             });
         }
         0

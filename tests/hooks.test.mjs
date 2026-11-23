@@ -272,11 +272,11 @@ test("an agent's pill goes away when its session ends, or 5.2 s after it stops",
   hook({ hook_event_name: "SessionEnd", nubo_agent: "gemini" });
   assert.equal(task("agent_gemini"), undefined);
 
-  hook({ hook_event_name: "SessionStart", nubo_agent: "codex" });
-  hook({ hook_event_name: "Stop", nubo_agent: "codex" });
-  assert.equal(task("agent_codex").state, "finished");
+  hook({ hook_event_name: "SessionStart", nubo_agent: "gemini" });
+  hook({ hook_event_name: "Stop", nubo_agent: "gemini" });
+  assert.equal(task("agent_gemini").state, "finished");
   seconds(5.2);
-  assert.equal(task("agent_codex"), undefined);
+  assert.equal(task("agent_gemini"), undefined);
 });
 
 test("an agent's permission request is declined, never shown as Claude Code's", () => {
@@ -347,6 +347,7 @@ test("an agent's turn ending takes its card down and gives the front back", () =
   assert.equal(State.focusId, "agent_codex");
   asked = [];
   hook({ hook_event_name: "Stop", session_id: "s1", nubo_agent: "codex" });
+  seconds(2);
   assert.equal(State.pendingApproval, null);
   assert.equal(State.focusId, "integration_n8n");
   // The stop no longer has the front: its pill is badged, the view is not taken.
@@ -381,6 +382,7 @@ test("the end of the turn takes a waiting card down and releases the relay", () 
     hook({ hook_event_name: end, session_id: "other", nubo_agent: "codex" });
     assert.equal(State.pendingApproval?.requestId, "r1", end);
     hook({ hook_event_name: end, session_id: "s1", nubo_agent: "codex" });
+    if (end === "Stop") seconds(2);
     assert.equal(State.pendingApproval, null, end);
     assert.deepEqual(sent("approval_decline"), [{ requestId: "r1" }], end);
     mock.timers.runAll();
@@ -486,9 +488,70 @@ test("the main tool's agent sessions put it back as it was, never take it away",
   State.loadIntegrationTasks();
   hook({ hook_event_name: "SessionStart", nubo_agent: "codex" });
   hook({ hook_event_name: "Stop", nubo_agent: "codex" });
-  seconds(5.2);
+  seconds(2);
+  seconds(15);
   assert.equal(task("agent_codex").state, "idle");
   assert.equal(task("agent_codex").name, "Codex");
+});
+
+const codexHook = (hook_event_name, session_id = "s1", turn_id = "t1", extra = {}) =>
+  hook({ nubo_agent: "codex", hook_event_name, session_id, turn_id, ...extra });
+
+test("Codex continuing after Stop keeps working and never raises a completed card", () => {
+  codexHook("UserPromptSubmit");
+  State.setFocus("agent_codex");
+  asked = [];
+  codexHook("Stop");
+  seconds(1);
+  codexHook("PreToolUse");
+  seconds(15);
+  assert.equal(task("agent_codex").state, "working");
+  assert.ok(!asked.includes("alert:finished"));
+});
+
+test("another Codex thread or an older turn cannot finish the active turn", () => {
+  codexHook("UserPromptSubmit", "s1", "t2");
+  State.setFocus("agent_codex");
+  asked = [];
+  codexHook("Stop", "s1", "t1");
+  codexHook("Stop", "s2", "t1");
+  codexHook("SessionEnd", "s2", "t1");
+  seconds(17);
+  assert.equal(task("agent_codex").state, "thinking");
+  assert.equal(task("agent_codex").sessionId, "s1");
+  assert.ok(!asked.includes("alert:finished"));
+});
+
+test("Codex completion keeps the response and session after the alert expires", () => {
+  State.settings.autoCloseInterval = 1;
+  State.mode = "expanded";
+  codexHook("UserPromptSubmit");
+  State.setFocus("agent_codex");
+  asked = [];
+  codexHook("Stop", "s1", "t1", { last_assistant_message: "Done with the changes." });
+  assert.equal(task("agent_codex").state, "thinking");
+  seconds(2);
+  assert.deepEqual(asked, ["alert:finished"]);
+  seconds(9.9);
+  assert.equal(task("agent_codex").state, "finished");
+  seconds(0.1);
+  assert.equal(task("agent_codex").state, "idle");
+  assert.equal(task("agent_codex").sessionId, "s1");
+  assert.equal(task("agent_codex").finalLine, "Done with the changes.");
+});
+
+test("Codex work arriving after a completion replaces the stale card", () => {
+  codexHook("UserPromptSubmit");
+  State.setFocus("agent_codex");
+  codexHook("Stop");
+  seconds(2);
+  State.mode = "expanded";
+  State.view = "finished";
+  asked = [];
+  codexHook("PostToolUse");
+  assert.deepEqual(asked, ["setView:overview"]);
+  seconds(16);
+  assert.equal(task("agent_codex").state, "working");
 });
 
 // ── Permission requests ───────────────────────────────────────────────────────

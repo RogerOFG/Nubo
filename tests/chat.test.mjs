@@ -30,7 +30,7 @@ beforeEach(() => {
   State.chatHistory = [];
   State.stateOverride = null;
   State.view = "prompt";
-  State.droppedFile = null;
+  State.promptFile = null;
   view = buildPrompt(() => {});
   view.sync();
 });
@@ -165,4 +165,22 @@ test("a failed answer leaves the chat for the note without taking the focus", as
   await flush();
   assert.equal(State.view, "note");
   assert.deepEqual(focused, []);
+});
+
+test("removing the attachment clears the chip and sends the question without the file", async () => {
+  answers.chat_send = { text: "Hello!" };
+  State.promptFile = { name: "sample.txt", path: "C:/Nubo/inbox/sample.txt" };
+  view.sync();
+  assert.equal($(".chip").textContent, "sample.txt");
+
+  $(".file-action").fire("click");
+  view.sync();
+  assert.equal(State.promptFile, null);
+  assert.equal($(".chip"), null);
+
+  $(".chat-input").value = "hello";
+  $(".send-btn").fire("click");
+  await flush();
+  assert.equal(sent("chat_send").at(-1).context, null);
+  assert.equal(sent("chat_reset").length, 0);
 });

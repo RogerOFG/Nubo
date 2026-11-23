@@ -549,44 +549,24 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                     Ok(s) => (s.width as f64 / scale, s.height as f64 / scale),
                     Err(_) => (PANEL_W, PANEL_H),
                 };
-                if (x - last.0).abs() < 1.0 && (y - last.1).abs() < 1.0 {
-                    continue;
-                }
-                last = (x, y);
-
-                // Click-through: the window only takes the mouse over the island
-                // shape. A small entry margin means the flag is already off by the
-                // time a moving cursor reaches a button.
+                // Re-evaluate hit testing even with a stationary pointer. A
+                // drop can resize the island while the pointer is still down.
                 let r = *gate.rect.lock().unwrap();
-                let on_island = r.w > 0.0
+                let accept = r.w > 0.0
                     && x >= r.x - HIT_MARGIN
                     && x <= r.x + r.w + HIT_MARGIN
                     && y >= r.y - HIT_MARGIN
                     && y <= r.y + r.h + HIT_MARGIN;
 
-                // A file being dragged has to be able to find us. WS_EX_TRANSPARENT
-                // — what click-through is on Windows — hides the window from
-                // WindowFromPoint, so OLE finds no drop target and shows the "no
-                // drop" cursor. macOS has no such problem: AppKit delivers drags to
-                // registered destinations whatever ignoresMouseEvents says. So while
-                // a button is held anywhere over the panel, the whole panel takes
-                // the mouse, which also makes the drop zone as forgiving as the Mac's.
-                // A press may be the start of a drag: make sure the drop target is
-                // ours before the file arrives.
+                // The settings workaround only applies while that window is
+                // visible. The island has its own WebView2 drop target.
                 let down = left_button_down();
-                if down && !was_down {
+                if down && !was_down && crate::hub_is_shown() {
                     let handle = app.clone();
                     let _ = app.run_on_main_thread(move || platform::unblock_webview_drops(&handle));
                 }
                 was_down = down;
 
-                let dragging = down
-                    && x >= 0.0
-                    && x <= size.0
-                    && y >= 0.0
-                    && y <= size.1;
-
-                let accept = on_island || dragging;
                 if gate.ignoring.load(Ordering::Relaxed) == accept {
                     // Under the gate's lock, and only while it is open: a tick
                     // still running as the island folds must not make the
@@ -600,8 +580,13 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                     platform::set_click_through(&win, !accept);
                 }
 
+                if (x - last.0).abs() < 1.0 && (y - last.1).abs() < 1.0 {
+                    continue;
+                }
+                last = (x, y);
+
                 // Far from the island: the page hears it once, then nothing.
-                let near = dragging || is_near(x, y, size);
+                let near = is_near(x, y, size);
                 if !near && far {
                     continue;
                 }

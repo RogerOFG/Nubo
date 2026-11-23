@@ -19,6 +19,20 @@ import { Launch } from "../core/launch";
 
 const CLAUDE_ID = "integration_claude";
 const CURSOR_ID = "agent_cursor";
+export const CODEX_COMPLETION_SECONDS = 10;
+/** Stop runs before other hooks have had their chance to continue the turn. */
+const CODEX_STOP_SETTLE_MS = 2_000;
+const CODEX_WORK_EVENTS = new Set([
+  "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+  "PostToolUseFailure", "PermissionRequest", "SubagentStart",
+]);
+let codexStop: { timer: number; sessionId: string; turnId?: string } | null = null;
+
+function cancelCodexStop() {
+  if (!codexStop) return;
+  window.clearTimeout(codexStop.timer);
+  codexStop = null;
+}
 
 /** Most requests waiting at once, the one on the card included (Mac ApprovalQueue.maxPending). */
 const MAX_PENDING = 5;
@@ -159,6 +173,7 @@ interface HookPayload {
   hook_event_name?: string;
   request_id?: string;
   session_id?: string;
+  turn_id?: string;
   cwd?: string;
   message?: string;
   /** UserPromptSubmit carries `prompt`; `message` belongs to Notification/Stop. */
@@ -358,7 +373,7 @@ export function registerHookHandlers(island: Island) {
   });
 }
 
-function handleHook(island: Island, payload: HookPayload) {
+function handleHook(island: Island, payload: HookPayload, settledCodexStop = false) {
   // Account-wide numbers from the status line relay, not part of any session:
   // keep the latest, nothing else (no reveal, no sound), paused or not.
   if (payload.hook_event_name === "StatusLine") {
@@ -388,6 +403,34 @@ function handleHook(island: Island, payload: HookPayload) {
   const agentId = validAgent ? `agent_${validAgent}` : workspaceId;
   const isExternalAgent = validAgent !== null;
   const sessionId = payload.session_id ?? "";
+  const isCodex = validAgent === "codex";
+  if (isCodex) {
+    const current = State.tasks.find((task) => task.id === agentId);
+    const differentSession = !!(sessionId && current?.sessionId && current.sessionId !== sessionId);
+    const differentTurn = !differentSession && payload.turn_id && current?.sessionTurnId
+      && current.sessionTurnId !== payload.turn_id;
+    const working = current && ["working", "thinking", "approval", "question"].includes(current.state);
+    if (TURN_OVER.has(name) && name !== "UserPromptSubmit") {
+      if ((differentSession && (working || name !== "Stop")) || differentTurn) return;
+      if (codexStop && codexStop.sessionId === sessionId &&
+          (!payload.turn_id || !codexStop.turnId || codexStop.turnId === payload.turn_id)) {
+        cancelCodexStop();
+      }
+      if (name === "Stop" && !settledCodexStop) {
+        cancelCodexStop();
+        const timer = window.setTimeout(() => {
+          codexStop = null;
+          handleHook(island, payload, true);
+        }, CODEX_STOP_SETTLE_MS);
+        codexStop = { timer, sessionId, turnId: payload.turn_id };
+        return;
+      }
+    } else if (CODEX_WORK_EVENTS.has(name)) {
+      // A delayed tool result from an earlier turn can't undo the current turn.
+      if (differentTurn && working && name !== "UserPromptSubmit") return;
+      cancelCodexStop();
+    }
+  }
 
   /** Alerts force the island open; work events only reveal the compact island. */
   const surface = (view: Parameters<Island["alert"]>[0], isAlert: boolean) => {
@@ -406,7 +449,11 @@ function handleHook(island: Island, payload: HookPayload) {
       State.upsertExternalAgent(agentId, agentName(validAgent!), agentColor(validAgent!));
       const t = State.tasks.find((x) => x.id === agentId);
       if (t && cwd) t.sessionCwd = cwd;
-      if (t && sessionId) t.sessionId = sessionId;
+      if (t && sessionId) {
+        if (t.sessionId !== sessionId) delete t.sessionTurnId;
+        t.sessionId = sessionId;
+      }
+      if (t && isCodex && payload.turn_id) t.sessionTurnId = payload.turn_id;
     } else {
       upsert(agentId, projectName, cwd, sessionId);
     }
@@ -419,6 +466,9 @@ function handleHook(island: Island, payload: HookPayload) {
    */
   const supersedeStop = () => {
     if (cancelStopTimer(agentId)) State.setPillBadge(agentId, null);
+    if (isCodex && State.mode === "expanded" && State.view === "finished" && State.focusId === agentId) {
+      island.setView("overview");
+    }
   };
 
   // Requests of a turn that is over still in line are moot: released at once,
@@ -447,6 +497,10 @@ function handleHook(island: Island, payload: HookPayload) {
   switch (name) {
     case "SessionStart":
       ensurePill();
+      if (isCodex && State.tasks.find((task) => task.id === agentId)?.state === "finished") {
+        supersedeStop();
+        State.updateTask(agentId, "working");
+      }
       clearFinalLine(agentId);
       // Hermes through its gateway says where the session comes from.
       if (validAgent === "hermes" && payload.platform && payload.platform !== "cli") {
@@ -490,6 +544,7 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "PostToolUse":
+      if (isCodex) ensurePill();
       supersedeStop();
       // The question was answered in the terminal: the card would be lying.
       if (
@@ -504,6 +559,7 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "PostToolUseFailure":
+      if (isCodex) ensurePill();
       supersedeStop();
       State.updateTask(agentId, "working");
       State.appendStep(agentId, t("⚠ failed"));
@@ -525,6 +581,7 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Stop": {
+      if (isCodex) ensurePill();
       State.updateTask(agentId, "finished");
       // Claude Code puts the turn's answer in the Stop payload itself, so there is
       // no transcript to read (the relay does not even forward its path). Other
@@ -538,8 +595,10 @@ function handleHook(island: Island, payload: HookPayload) {
       }
       Sound.play("finish");
       // A card waiting for an answer is never covered by another alert.
-      if (showsAlert(agentId, focused)) surface("finished", true);
-      else State.setPillBadge(agentId, "finished");
+      if (showsAlert(agentId, focused)) {
+        if (isCodex) island.alert("finished");
+        else surface("finished", true);
+      } else State.setPillBadge(agentId, "finished");
       cancelStopTimer(agentId);
       stopTimers.set(
         agentId,
@@ -548,14 +607,14 @@ function handleHook(island: Island, payload: HookPayload) {
           // While the island is open the alert's card stays on its own pill, and the
           // pill you had comes back when it closes (island.ts), as on the Mac. An agent
           // pill about to go hands the front back now.
-          if (isExternalAgent || State.mode !== "expanded") restoreAlertFocus();
-          if (isExternalAgent) {
+          if ((isExternalAgent && !isCodex) || State.mode !== "expanded") restoreAlertFocus();
+          if (isExternalAgent && !isCodex) {
             State.removeTask(agentId);
           } else {
             State.updateTask(agentId, "idle");
             State.setPillBadge(agentId, null);
           }
-        }, 5200),
+        }, isCodex ? Math.max(CODEX_COMPLETION_SECONDS, State.settings.autoCloseInterval) * 1000 : 5200),
       );
       break;
     }
@@ -589,6 +648,11 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "SubagentStart":
+      if (isCodex) {
+        ensurePill();
+        supersedeStop();
+        State.updateTask(agentId, "working");
+      }
       State.appendStep(agentId, t("+ subagent"));
       break;
 
