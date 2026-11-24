@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { emit } from "./tauri.mjs";
-import { registerHookHandlers } from "../src/island/hooks.ts";
+import { registerHookHandlers, RESPONSE_ALERT_SECONDS } from "../src/island/hooks.ts";
 import { DEFAULT_SETTINGS, DIFF_TTL_MS, MAX_DIFFS_PER_PILL, State } from "../src/core/state.ts";
 import { parseDiffStep } from "../src/core/diff.ts";
 
@@ -154,7 +154,7 @@ for (const [what, event] of [
 ]) {
   test(`the final message stays until ${what}`, () => {
     hook({ hook_event_name: "Stop", last_assistant_message: "Done." });
-    mock.timers.tick(5200); // back to idle: the line is still there
+    mock.timers.tick(RESPONSE_ALERT_SECONDS * 1000); // back to idle: the line is still there
     assert.equal(task().state, "idle");
     assert.equal(task().finalLine, "Done.");
     hook({ cwd: "/p/proj", ...event });

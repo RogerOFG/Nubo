@@ -19,7 +19,7 @@ import { Launch } from "../core/launch";
 
 const CLAUDE_ID = "integration_claude";
 const CURSOR_ID = "agent_cursor";
-export const CODEX_COMPLETION_SECONDS = 10;
+export const RESPONSE_ALERT_SECONDS = 10;
 /** Stop runs before other hooks have had their chance to continue the turn. */
 const CODEX_STOP_SETTLE_MS = 2_000;
 const CODEX_WORK_EVENTS = new Set([
@@ -95,10 +95,10 @@ function cancelStopTimer(id: string): boolean {
 let focusBeforeAlert: string | null = null;
 let alertPill: string | null = null;
 
-function showsAlert(pill: string, focused: boolean): boolean {
+function showsAlert(pill: string, focused: boolean, forcePill = false): boolean {
   if (State.pendingApproval) return false;
   if (focused) return true;
-  if (!State.settings.alertsFromAllPills) return false;
+  if (!forcePill && !State.settings.alertsFromAllPills) return false;
   if (State.mode === "expanded" && !["overview", "finished", "error", "empty"].includes(State.view)) {
     return false;
   }
@@ -174,6 +174,7 @@ interface HookPayload {
   request_id?: string;
   session_id?: string;
   turn_id?: string;
+  transcript_path?: string;
   cwd?: string;
   message?: string;
   /** UserPromptSubmit carries `prompt`; `message` belongs to Notification/Stop. */
@@ -373,6 +374,46 @@ export function registerHookHandlers(island: Island) {
   });
 }
 
+let completedCodexTurn: { session: string; turn: string } | null = null;
+let watchedCodexTurn: { session: string; turn: string; timer: number } | null = null;
+
+function stopWatchingCodexTurn() {
+  if (!watchedCodexTurn) return;
+  window.clearTimeout(watchedCodexTurn.timer);
+  watchedCodexTurn = null;
+}
+
+function watchCodexTurn(island: Island, payload: HookPayload) {
+  const { session_id: session, turn_id: turn, transcript_path: path } = payload;
+  if (!session || !turn) return;
+  if (watchedCodexTurn?.session === session && watchedCodexTurn.turn === turn) return;
+  stopWatchingCodexTurn();
+  let checks = 0;
+  const watch = { session, turn, timer: 0 };
+  watchedCodexTurn = watch;
+  const isCurrent = () => {
+    const task = State.tasks.find((entry) => entry.id === "agent_codex");
+    return watchedCodexTurn === watch && !State.paused && task?.sessionId === session
+      && task.sessionTurnId === turn && ["thinking", "working", "approval", "question"].includes(task.state);
+  };
+  const check = async () => {
+    if (isCurrent()) {
+      const result = await Bridge.codexTurnResult(path ?? "", session, turn);
+      if (isCurrent() && result) {
+        handleHook(island, { ...payload, hook_event_name: result.event, last_assistant_message: result.message }, true);
+        if (result.event === "Stop") completedCodexTurn = { session, turn };
+        return;
+      }
+      if (isCurrent() && ++checks < 450) {
+        watch.timer = window.setTimeout(check, 4000);
+        return;
+      }
+    }
+    if (watchedCodexTurn === watch) stopWatchingCodexTurn();
+  };
+  watch.timer = window.setTimeout(check, 4000);
+}
+
 function handleHook(island: Island, payload: HookPayload, settledCodexStop = false) {
   // Account-wide numbers from the status line relay, not part of any session:
   // keep the latest, nothing else (no reveal, no sound), paused or not.
@@ -410,6 +451,21 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
     const differentTurn = !differentSession && payload.turn_id && current?.sessionTurnId
       && current.sessionTurnId !== payload.turn_id;
     const working = current && ["working", "thinking", "approval", "question"].includes(current.state);
+    // A session opening is not evidence that the current turn resumed. Codex
+    // can open a short-lived background session immediately after Stop.
+    if (name === "SessionStart" && (working || current?.state === "finished")) return;
+    if (codexStop && differentSession && CODEX_WORK_EVENTS.has(name)) {
+      if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
+      return;
+    }
+    // The session can close before the pending response card is shown.
+    if (name === "SessionEnd" && (codexStop || current?.state === "finished")) return;
+    const alreadyConfirmed = payload.turn_id && completedCodexTurn?.session === sessionId
+      && completedCodexTurn.turn === payload.turn_id;
+    if (alreadyConfirmed && (name === "Stop" || CODEX_WORK_EVENTS.has(name))) {
+      if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
+      return;
+    }
     if (TURN_OVER.has(name) && name !== "UserPromptSubmit") {
       if ((differentSession && (working || name !== "Stop")) || differentTurn) return;
       if (codexStop && codexStop.sessionId === sessionId &&
@@ -425,6 +481,7 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
         codexStop = { timer, sessionId, turnId: payload.turn_id };
         return;
       }
+      stopWatchingCodexTurn();
     } else if (CODEX_WORK_EVENTS.has(name)) {
       // A delayed tool result from an earlier turn can't undo the current turn.
       if (differentTurn && working && name !== "UserPromptSubmit") return;
@@ -453,7 +510,10 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
         if (t.sessionId !== sessionId) delete t.sessionTurnId;
         t.sessionId = sessionId;
       }
-      if (t && isCodex && payload.turn_id) t.sessionTurnId = payload.turn_id;
+      if (t && isCodex && payload.turn_id) {
+        t.sessionTurnId = payload.turn_id;
+        if (CODEX_WORK_EVENTS.has(name)) watchCodexTurn(island, payload);
+      }
     } else {
       upsert(agentId, projectName, cwd, sessionId);
     }
@@ -497,10 +557,6 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
   switch (name) {
     case "SessionStart":
       ensurePill();
-      if (isCodex && State.tasks.find((task) => task.id === agentId)?.state === "finished") {
-        supersedeStop();
-        State.updateTask(agentId, "working");
-      }
       clearFinalLine(agentId);
       // Hermes through its gateway says where the session comes from.
       if (validAgent === "hermes" && payload.platform && payload.platform !== "cli") {
@@ -595,7 +651,7 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
       }
       Sound.play("finish");
       // A card waiting for an answer is never covered by another alert.
-      if (showsAlert(agentId, focused)) {
+      if (showsAlert(agentId, focused, isCodex && !pending)) {
         if (isCodex) island.alert("finished");
         else surface("finished", true);
       } else State.setPillBadge(agentId, "finished");
@@ -614,7 +670,7 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
             State.updateTask(agentId, "idle");
             State.setPillBadge(agentId, null);
           }
-        }, isCodex ? Math.max(CODEX_COMPLETION_SECONDS, State.settings.autoCloseInterval) * 1000 : 5200),
+        }, RESPONSE_ALERT_SECONDS * 1000),
       );
       break;
     }
@@ -636,7 +692,7 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
 
     case "SessionEnd":
       // Nothing left for the timer to do, and it must not outlive the session: a
-      // pill recreated within 5.2 s would be removed by it.
+      // recreated pill could otherwise be removed by the old timer.
       cancelStopTimer(agentId);
       State.clearSessionDiffs(agentId);
       if (isExternalAgent) {

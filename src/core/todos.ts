@@ -15,6 +15,7 @@ export interface Task {
   doneDay: string;
   /** The day it was last reminded: a reminder is once a day. */
   notifiedDay: string;
+  snoozedUntil?: number;
 }
 
 export interface Note {
@@ -74,8 +75,22 @@ export function dueTasks(tasks: readonly Task[], now: Date): Task[] {
   const minute = now.getHours() * 60 + now.getMinutes();
   return tasksFor(tasks, day).filter((t) => {
     const at = minutesOf(t.time);
-    return at != null && at <= minute && t.notifiedDay !== day && !isDone(t, day);
+    const due = t.snoozedUntil ? t.snoozedUntil <= now.getTime() : at != null && at <= minute;
+    return due && t.notifiedDay !== day && !isDone(t, day);
   });
+}
+
+export function pendingReminder(task: Task, day = dayOf(new Date())): boolean {
+  return task.notifiedDay > task.doneDay && !task.snoozedUntil && !isDone(task, day);
+}
+
+export function hasPendingReminders(): boolean {
+  const day = dayOf(new Date());
+  return Todos.tasks.some((task) => pendingReminder(task, day));
+}
+
+export function postponeReminder(task: Task, now = Date.now()): Task {
+  return { ...task, notifiedDay: "", snoozedUntil: now + 5 * 60_000 };
 }
 
 export function newId(): string {
@@ -87,9 +102,14 @@ export function newId(): string {
 
 export const Todos: TodoData & { loaded: boolean } = { tasks: [], notes: [], loaded: false };
 
+let saveOrder = 0;
+let saveQueue: Promise<unknown> = Promise.resolve();
+
 export async function loadTodos(): Promise<void> {
+  const order = saveOrder;
+  await saveQueue;
   const data = await Bridge.todoLoad();
-  if (!data) return;
+  if (!data || order !== saveOrder) return;
   Todos.tasks = data.tasks;
   Todos.notes = data.notes;
   Todos.loaded = true;
@@ -97,10 +117,15 @@ export async function loadTodos(): Promise<void> {
 
 /** Saves both lists; false when it could not be written (the page's copy is left as it was). */
 export async function saveTodos(next: TodoData): Promise<boolean> {
-  const kept = await Bridge.todoSave(next);
+  const order = ++saveOrder;
+  const pending = saveQueue.then(() => Bridge.todoSave(next));
+  saveQueue = pending;
+  const kept = await pending;
   if (!kept) return false;
-  Todos.tasks = kept.tasks;
-  Todos.notes = kept.notes;
-  Todos.loaded = true;
+  if (order === saveOrder) {
+    Todos.tasks = kept.tasks;
+    Todos.notes = kept.notes;
+    Todos.loaded = true;
+  }
   return true;
 }

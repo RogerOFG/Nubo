@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { calls, emit, sent } from "./tauri.mjs";
 import { registerHookHandlers, restoreAlertFocus } from "../src/island/hooks.ts";
 import { DEFAULT_SETTINGS, State } from "../src/core/state.ts";
+import { Bridge } from "../src/core/bridge.ts";
 import { Sound } from "../src/core/sound.ts";
 import { setLanguage } from "../src/i18n/i18n.ts";
 
@@ -45,7 +46,7 @@ beforeEach(() => {
 });
 
 // hooks.ts keeps timer handles between events: the 110 s approval timeout, and
-// one 5.2 s return to idle per pill that has stopped. Letting every timer fire
+// one 10 s return to idle per pill that has stopped. Letting every timer fire
 // before the reset clears them all; otherwise the next test would cancel a timer
 // that belongs to a mock clock that no longer exists.
 afterEach(() => {
@@ -165,12 +166,12 @@ test("an unknown event changes nothing", () => {
 
 // ── Stop ──────────────────────────────────────────────────────────────────────
 
-test("a finished session opens the finished view, then goes idle after 5.2 s", () => {
+test("a finished session opens the finished view, then goes idle after 10 s", () => {
   hook({ hook_event_name: "Stop", message: "done" });
   assert.equal(task().state, "finished");
   assert.deepEqual(task().steps, ["done"]);
   assert.deepEqual(asked, ["alert:finished"]);
-  seconds(5.1);
+  seconds(9.9);
   assert.equal(task().state, "finished");
   seconds(0.1);
   assert.equal(task().state, "idle");
@@ -182,22 +183,22 @@ test("an alert on an island that is already open only switches its view", () => 
   assert.deepEqual(asked, ["setView:finished"]);
 });
 
-test("a session finishing behind another pill only badges its own, for 5.2 s", () => {
+test("a session finishing behind another pill only badges its own, for 10 s", () => {
   State.setFocus("integration_n8n");
   hook({ hook_event_name: "Stop" });
   assert.deepEqual(asked, []);
   assert.equal(task().pillBadge, "finished");
-  seconds(5.2);
+  seconds(10);
   assert.equal(task().pillBadge, null);
 });
 
-test("alertsFromAllPills: unfocused pill alert opens the island and restores focus after 5.2 s", () => {
+test("alertsFromAllPills: unfocused pill alert opens the island and restores focus after 10 s", () => {
   State.settings.alertsFromAllPills = true;
   State.setFocus("integration_n8n");
   hook({ hook_event_name: "Stop" });
   assert.equal(State.focusId, "integration_claude");
   assert.deepEqual(asked, ["alert:finished"]);
-  seconds(5.2);
+  seconds(10);
   assert.equal(State.focusId, "integration_n8n");
   State.settings.alertsFromAllPills = false;
 });
@@ -207,7 +208,7 @@ test("alertsFromAllPills: while the island is open the alert's pill keeps the fr
   State.setFocus("integration_n8n");
   hook({ hook_event_name: "Stop" });
   State.mode = "expanded";
-  seconds(5.2);
+  seconds(10);
   // The finished card still names the pill that finished; closing gives n8n back.
   assert.equal(State.focusId, "integration_claude");
   restoreAlertFocus();
@@ -231,14 +232,14 @@ test("the end of a session puts the pill back as it was", () => {
   assert.deepEqual(task().steps, []);
 });
 
-// Stop arms a 5.2 s timer that puts the pill back to idle. It used to be armed
+// Stop arms a 10 s timer that puts the pill back to idle. It used to be armed
 // and forgotten, so a prompt submitted inside that window showed as thinking and
 // was then put back to idle mid-work when the old timer fired.
-test("a new turn within 5.2 s of a stop is not put back to idle", () => {
+test("a new turn within 10 s of a stop is not put back to idle", () => {
   hook({ hook_event_name: "Stop" });
   seconds(1);
   hook({ hook_event_name: "UserPromptSubmit", prompt: "next" });
-  seconds(5);
+  seconds(10);
   assert.equal(task().state, "thinking");
 });
 
@@ -267,7 +268,7 @@ test("an invalid or reserved agent tag falls back to the Claude Code pill", () =
   assert.equal(task().name, "proj");
 });
 
-test("an agent's pill goes away when its session ends, or 5.2 s after it stops", () => {
+test("an agent's pill goes away when its session ends, or 10 s after it stops", () => {
   hook({ hook_event_name: "SessionStart", nubo_agent: "gemini" });
   hook({ hook_event_name: "SessionEnd", nubo_agent: "gemini" });
   assert.equal(task("agent_gemini"), undefined);
@@ -275,7 +276,7 @@ test("an agent's pill goes away when its session ends, or 5.2 s after it stops",
   hook({ hook_event_name: "SessionStart", nubo_agent: "gemini" });
   hook({ hook_event_name: "Stop", nubo_agent: "gemini" });
   assert.equal(task("agent_gemini").state, "finished");
-  seconds(5.2);
+  seconds(10);
   assert.equal(task("agent_gemini"), undefined);
 });
 
@@ -489,7 +490,7 @@ test("the main tool's agent sessions put it back as it was, never take it away",
   hook({ hook_event_name: "SessionStart", nubo_agent: "codex" });
   hook({ hook_event_name: "Stop", nubo_agent: "codex" });
   seconds(2);
-  seconds(15);
+  seconds(10);
   assert.equal(task("agent_codex").state, "idle");
   assert.equal(task("agent_codex").name, "Codex");
 });
@@ -507,6 +508,23 @@ test("Codex continuing after Stop keeps working and never raises a completed car
   seconds(15);
   assert.equal(task("agent_codex").state, "working");
   assert.ok(!asked.includes("alert:finished"));
+});
+
+test("a background session opening after Codex Stop cannot cancel the response alert", () => {
+  codexHook("UserPromptSubmit");
+  State.mode = "hidden";
+  asked = [];
+  codexHook("Stop", "s1", "t1", { last_assistant_message: "Done." });
+  seconds(1);
+  codexHook("SessionStart", "background", "aux");
+  codexHook("UserPromptSubmit", "background", "aux");
+  seconds(1);
+  assert.deepEqual(asked, ["alert:finished"]);
+  assert.equal(task("agent_codex").sessionId, "s1");
+  codexHook("Interrupt", "background", "aux");
+  codexHook("SessionEnd", "background", "aux");
+  assert.equal(task("agent_codex").state, "finished");
+  assert.equal(task("agent_codex").finalLine, "Done.");
 });
 
 test("another Codex thread or an older turn cannot finish the active turn", () => {
@@ -538,6 +556,25 @@ test("Codex completion keeps the response and session after the alert expires", 
   assert.equal(task("agent_codex").state, "idle");
   assert.equal(task("agent_codex").sessionId, "s1");
   assert.equal(task("agent_codex").finalLine, "Done with the changes.");
+});
+
+test("a recorded Codex completion alerts once even when Stop is delayed", async () => {
+  const result = mock.method(Bridge, "codexTurnResult", async () => ({ event: "Stop", message: "Done" }));
+  try {
+    codexHook("UserPromptSubmit", "missed-stop", "complete-me");
+    State.setFocus("agent_codex");
+    asked = [];
+    seconds(4);
+    await Promise.resolve();
+    assert.equal(task("agent_codex").state, "finished");
+    codexHook("PostToolUse", "missed-stop", "complete-me");
+    assert.equal(task("agent_codex").state, "finished");
+    codexHook("Stop", "missed-stop", "complete-me");
+    seconds(2);
+    assert.deepEqual(asked, ["alert:finished"]);
+  } finally {
+    result.mock.restore();
+  }
 });
 
 test("Codex work arriving after a completion replaces the stale card", () => {
@@ -767,7 +804,7 @@ test("a card answered in time leaves nothing for the 110 s timer to undo", () =>
 });
 
 // ── What takes over from a stop ───────────────────────────────────────────────
-// Stop arms a 5.2 s return to idle. A handler that writes a newer state cancels
+// Stop arms a 10 s return to idle. A handler that writes a newer state cancels
 // it; one that writes none leaves it alone, or the pill would stay finished.
 
 /** A stop, then `event` one second later, then enough time for the timer. */
@@ -776,26 +813,26 @@ const afterStop = (event, extra = {}) => {
   seconds(1);
   if (typeof event === "function") event();
   else hook({ ...event, ...extra });
-  seconds(5);
+  seconds(10);
 };
 
-test("a tool call within 5.2 s of a stop is not put back to idle", () => {
+test("a tool call within 10 s of a stop is not put back to idle", () => {
   afterStop({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } });
   assert.equal(task().state, "working");
 });
 
-test("a tool result within 5.2 s of a stop is not put back to idle", () => {
+test("a tool result within 10 s of a stop is not put back to idle", () => {
   afterStop({ hook_event_name: "PostToolUse" });
   assert.equal(task().state, "working");
 });
 
-test("a failed tool call within 5.2 s of a stop keeps working, and its step", () => {
+test("a failed tool call within 10 s of a stop keeps working, and its step", () => {
   afterStop({ hook_event_name: "PostToolUseFailure" });
   assert.equal(task().state, "working");
   assert.equal(task().steps.at(-1), "⚠ failed");
 });
 
-test("a permission request within 5.2 s of a stop keeps its card", () => {
+test("a permission request within 10 s of a stop keeps its card", () => {
   afterStop(() => ask("r1"));
   assert.equal(task().state, "approval");
   assert.equal(State.pendingApproval.requestId, "r1");
@@ -809,17 +846,17 @@ test("a permission request behind another pill keeps the front past the stop tim
   assert.equal(State.pendingApproval.requestId, "r1");
 });
 
-test("a rate limit within 5.2 s of a stop stays a rate limit", () => {
+test("a rate limit within 10 s of a stop stays a rate limit", () => {
   afterStop({ hook_event_name: "Notification", message: "Usage rate limit reached" });
   assert.equal(task().state, "ratelimit");
 });
 
-test("a question within 5.2 s of a stop stays a question", () => {
+test("a question within 10 s of a stop stays a question", () => {
   afterStop({ hook_event_name: "Notification", message: "Shall I continue?" });
   assert.equal(task().state, "question");
 });
 
-test("a failed stop within 5.2 s of a stop stays an error, badge included", () => {
+test("a failed stop within 10 s of a stop stays an error, badge included", () => {
   afterStop({ hook_event_name: "StopFailure" });
   assert.equal(task().state, "error");
   State.setFocus("integration_n8n");
@@ -836,7 +873,7 @@ test("a new turn behind another pill drops the finished badge straight away", ()
   assert.equal(task().pillBadge, null);
 });
 
-test("an agent that goes back to work within 5.2 s of its stop keeps its pill", () => {
+test("an agent that goes back to work within 10 s of its stop keeps its pill", () => {
   afterStop(
     { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } },
     { nubo_agent: "gemini" },
@@ -848,18 +885,18 @@ test("an agent's session ending takes its stop timer with it", () => {
   hook({ hook_event_name: "Stop", nubo_agent: "gemini" });
   hook({ hook_event_name: "SessionEnd", nubo_agent: "gemini" });
   hook({ hook_event_name: "SessionStart", nubo_agent: "gemini" });
-  seconds(5.2);
+  seconds(10);
   assert.notEqual(task("agent_gemini"), undefined);
 });
 
-test("a second stop restarts the 5.2 s: the first stop's timer no longer counts", () => {
+test("a second stop restarts the 10 s: the first stop's timer no longer counts", () => {
   hook({ hook_event_name: "Stop" });
   seconds(3);
   hook({ hook_event_name: "Stop" });
-  // 5.2 s after the first stop.
-  seconds(2.2);
+  // 10 s after the first stop.
+  seconds(7);
   assert.equal(task().state, "finished");
-  // 5.1 s, then 5.2 s, after the second.
+  // 9.9 s, then 10 s, after the second.
   seconds(2.9);
   assert.equal(task().state, "finished");
   seconds(0.1);
@@ -876,7 +913,7 @@ test("the end of a Claude Code session leaves no stop timer behind", () => {
   // way the Allow button does, because a hook event would cancel the timer itself.
   State.updateTask(CLAUDE, "working");
   State.setPillBadge(CLAUDE, "error");
-  seconds(5.2);
+  seconds(10);
   assert.equal(task().state, "working");
   assert.equal(task().pillBadge, "error");
 });
@@ -895,11 +932,11 @@ for (const [what, event] of [
   ["a notification that is neither a limit nor a question", { hook_event_name: "Notification", message: "Just so you know." }],
   ["an unknown event", { hook_event_name: "SomethingNew" }],
 ]) {
-  test(`${what} within 5.2 s of a stop still lets the pill go idle`, () => {
+  test(`${what} within 10 s of a stop still lets the pill go idle`, () => {
     hook({ hook_event_name: "Stop" });
     seconds(1);
     hook(event);
-    seconds(4.1);
+    seconds(8.9);
     assert.equal(task().state, "finished");
     seconds(0.1);
     assert.equal(task().state, "idle");

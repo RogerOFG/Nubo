@@ -147,6 +147,46 @@
       ]
     },
     {
+      "version": "0.5.12",
+      "items": [
+        {
+          "icon": "terminal",
+          "title": {
+            "en": "Codex and reminders",
+            "zh-Hans": "Codex 与提醒",
+            "hi": "Codex और रिमाइंडर",
+            "es": "Codex y recordatorios",
+            "ar": "Codex والتذكيرات",
+            "fr": "Codex et rappels",
+            "bn": "Codex ও রিমাইন্ডার",
+            "pt-BR": "Codex e lembretes",
+            "ru": "Codex и напоминания",
+            "id": "Codex dan pengingat",
+            "de": "Codex und Erinnerungen",
+            "tr": "Codex ve hatırlatıcılar",
+            "ko": "Codex와 알림",
+            "ja": "Codex とリマインダー"
+          },
+          "detail": {
+            "en": "Response alerts stay visible, and postponed tasks show their new time.",
+            "zh-Hans": "回复提醒会保持可见，已推迟的任务会显示新时间。",
+            "hi": "जवाब की सूचनाएँ दिखती रहती हैं और टाली गई टास्क का नया समय दिखता है।",
+            "es": "Los avisos de respuesta se mantienen visibles y las tareas pospuestas muestran su nueva hora.",
+            "ar": "تبقى تنبيهات الرد ظاهرة وتعرض المهام المؤجلة وقتها الجديد.",
+            "fr": "Les alertes de réponse restent visibles et les tâches reportées affichent leur nouvelle heure.",
+            "bn": "উত্তরের সতর্কতা দৃশ্যমান থাকে এবং পিছিয়ে দেওয়া কাজের নতুন সময় দেখা যায়।",
+            "pt-BR": "Os avisos de resposta continuam visíveis e as tarefas adiadas mostram o novo horário.",
+            "ru": "Уведомления об ответах остаются видимыми, а отложенные задачи показывают новое время.",
+            "id": "Notifikasi jawaban tetap terlihat dan tugas yang ditunda menampilkan waktu baru.",
+            "de": "Antwortmeldungen bleiben sichtbar und verschobene Aufgaben zeigen die neue Uhrzeit.",
+            "tr": "Yanıt bildirimleri görünür kalır ve ertelenen görevler yeni saati gösterir.",
+            "ko": "응답 알림이 계속 표시되고 미룬 작업의 새 시간이 표시됩니다.",
+            "ja": "応答通知が表示されたままになり、延期したタスクに新しい時刻が表示されます。"
+          }
+        }
+      ]
+    },
+    {
       "version": "0.5.11",
       "items": [
         {

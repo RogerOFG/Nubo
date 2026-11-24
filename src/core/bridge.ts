@@ -332,6 +332,8 @@ export const Bridge = {
    * is missing, not signed in or slow (15 s).
    */
   codexPlanUsage: () => call<unknown>("codex_plan_usage"),
+  codexTurnResult: (path: string, sessionId: string, turnId: string) =>
+    call<{ event: "Stop" | "Interrupt"; message?: string }>("codex_turn_result", { path, sessionId, turnId }),
 
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
     call<void>("approval_decision", { requestId, decision }),
@@ -407,7 +409,7 @@ export const Bridge = {
     callOrThrow<LocalServer>("local_connect", { provider, url }),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
-  dragShelfFile: (path: string) => callOrThrow<void>("drag_shelf_file", { path }),
+  dragShelfFile: (path: string) => callOrThrow<boolean>("drag_shelf_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */
   secretPresent: (key: string) => call<boolean>("secret_present", { key }),
   /** Whether Claude can answer: the API key, or else the user's own Claude Code. */

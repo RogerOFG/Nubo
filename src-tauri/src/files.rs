@@ -140,36 +140,135 @@ pub(crate) fn is_inside(dir: &std::path::Path, path: &std::path::Path) -> bool {
         && std::fs::symlink_metadata(&file).map(|m| m.is_file()).unwrap_or(false)
 }
 
-/// Starts an OLE copy drag so Explorer and other apps receive a real file.
 #[cfg(windows)]
-pub fn drag_out(path: &str) -> Result<(), String> {
-    use windows::core::{HSTRING, PCWSTR};
+mod shelf_drag {
+    use super::{inbox_dir, is_inside, Path};
+    use windows::core::{implement, BOOL, HRESULT, HSTRING, PCWSTR};
+    use windows::Win32::Foundation::{
+        DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, S_OK,
+    };
     use windows::Win32::System::Com::{IBindCtx, IDataObject};
-    use windows::Win32::System::Ole::{OleInitialize, OleUninitialize, DROPEFFECT_COPY, IDropSource};
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
-    use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, SHDoDragDrop, BHID_DataObject};
+    use windows::Win32::System::Ole::{
+        DoDragDrop, IDropSource, IDropSource_Impl, OleInitialize, OleUninitialize,
+        DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_MOVE,
+    };
+    use windows::Win32::System::SystemServices::{MODIFIERKEYS_FLAGS, MK_LBUTTON, MK_RBUTTON};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_LBUTTON, VK_RBUTTON, VK_SHIFT};
+    use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, BHID_DataObject};
     use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
 
-    if !is_inside(&inbox_dir(), Path::new(path)) {
-        return Err(crate::i18n::t("Only files dropped on the island can be dragged out."));
+    #[implement(IDropSource)]
+    struct ShelfSource {
+        button: VIRTUAL_KEY,
+        pressed: MODIFIERKEYS_FLAGS,
     }
-    let path = HSTRING::from(path);
-    let result = unsafe {
-        OleInitialize(None).map_err(|error| error.to_string())?;
-        let result = (|| {
-            let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(path.as_ptr()), None::<&IBindCtx>)?;
-            let data: IDataObject = item.BindToHandler(None::<&IBindCtx>, &BHID_DataObject)?;
-            let button = if GetSystemMetrics(SM_SWAPBUTTON) != 0 { VK_RBUTTON } else { VK_LBUTTON };
-            if GetAsyncKeyState(button.0.into()) < 0 {
-                SHDoDragDrop(None, &data, None::<&IDropSource>, DROPEFFECT_COPY)?;
+
+    impl IDropSource_Impl for ShelfSource_Impl {
+        fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> HRESULT {
+            drag_decision(escape.as_bool(), keys.0 & self.pressed.0 != 0, held(self.button))
+        }
+
+        fn GiveFeedback(&self, _: DROPEFFECT) -> HRESULT {
+            DRAGDROP_S_USEDEFAULTCURSORS
+        }
+    }
+
+    fn drag_decision(escape: bool, message_pressed: bool, physical_pressed: bool) -> HRESULT {
+        if escape {
+            DRAGDROP_S_CANCEL
+        } else if !message_pressed || !physical_pressed {
+            DRAGDROP_S_DROP
+        } else {
+            S_OK
+        }
+    }
+
+    fn held(key: VIRTUAL_KEY) -> bool {
+        unsafe { GetAsyncKeyState(key.0.into()) < 0 }
+    }
+
+    /// Runs on the window's UI thread so OLE owns the mouse only for this gesture.
+    /// Shift at the start moves the inbox copy. The default keeps it reusable.
+    pub fn drag_out(path: &str) -> Result<bool, String> {
+        if !is_inside(&inbox_dir(), Path::new(path)) {
+            return Err(crate::i18n::t("Only files dropped on the island can be dragged out."));
+        }
+        let (button, pressed) = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 {
+            (VK_RBUTTON, MK_RBUTTON)
+        } else {
+            (VK_LBUTTON, MK_LBUTTON)
+        };
+        if !held(button) {
+            return Ok(false);
+        }
+        let allowed = if held(VK_SHIFT) { DROPEFFECT_MOVE } else { DROPEFFECT_COPY };
+        let source: IDropSource = ShelfSource { button, pressed }.into();
+        let shell_path = HSTRING::from(path);
+        let result = unsafe {
+            OleInitialize(None).map_err(|error| error.to_string())?;
+            let result = (|| {
+                let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(shell_path.as_ptr()), None::<&IBindCtx>)?;
+                let data: IDataObject = item.BindToHandler(None::<&IBindCtx>, &BHID_DataObject)?;
+                if !held(button) {
+                    return Ok(None);
+                }
+                let mut effect = DROPEFFECT::default();
+                let status = DoDragDrop(&data, &source, allowed, &mut effect);
+                status.ok()?;
+                Ok::<_, windows::core::Error>((status == DRAGDROP_S_DROP).then_some(effect))
+            })();
+            OleUninitialize();
+            result
+        };
+        let outcome = result.map_err(|error| error.to_string())?;
+        if allowed != DROPEFFECT_MOVE {
+            return Ok(false);
+        }
+        finish_move(Path::new(path), outcome).map_err(|error| error.to_string())
+    }
+
+    fn finish_move(path: &Path, outcome: Option<DROPEFFECT>) -> std::io::Result<bool> {
+        let Some(effect) = outcome else { return Ok(false) };
+        // Explorer may move the file itself without returning MOVE. When the
+        // target returns MOVE, it can leave deletion of the inbox copy to us.
+        if effect == DROPEFFECT_MOVE {
+            match std::fs::remove_file(path) {
+                Ok(()) => return Ok(true),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+                Err(error) => return Err(error),
             }
-            Ok::<(), windows::core::Error>(())
-        })();
-        OleUninitialize();
-        result
-    };
-    result.map_err(|error| error.to_string())
+        }
+        match std::fs::metadata(path) {
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error),
+        }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn explorer_can_move_the_copy_itself_or_leave_cleanup_to_the_source() {
+        let path = std::env::temp_dir().join(format!("nubo-move-{}.txt", std::process::id()));
+        std::fs::write(&path, "shelf copy").unwrap();
+        assert!(!finish_move(&path, None).unwrap());
+        assert!(path.exists());
+        assert!(finish_move(&path, Some(DROPEFFECT_MOVE)).unwrap());
+        assert!(!path.exists());
+        assert!(finish_move(&path, Some(DROPEFFECT::default())).unwrap());
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn releasing_the_mouse_ends_the_drag_even_with_stale_ole_input() {
+        assert_eq!(drag_decision(false, true, true), S_OK);
+        assert_eq!(drag_decision(false, false, true), DRAGDROP_S_DROP);
+        assert_eq!(drag_decision(false, true, false), DRAGDROP_S_DROP);
+        assert_eq!(drag_decision(true, true, false), DRAGDROP_S_CANCEL);
+    }
 }
+
+#[cfg(windows)]
+pub use shelf_drag::drag_out;
 
 #[cfg(test)]
 mod tests {

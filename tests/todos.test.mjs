@@ -47,3 +47,40 @@ test("a task is due once its time has come, once a day, unless done", () => {
   assert.equal(isOverdue(list[1], at(day, 10, 0)), false);
   assert.equal(isOverdue(list[3], at(day, 10, 0)), false);
 });
+
+test("a snoozed reminder rings after five minutes across midnight", async () => {
+  const { postponeReminder, pendingReminder } = await import("../src/core/todos.ts");
+  const now = new Date(2026, 10, 24, 23, 59);
+  const task = { id: "snooze", title: "Task", time: "23:58", daily: true, doneDay: "", notifiedDay: dayOf(now) };
+  assert.ok(pendingReminder(task, dayOf(now)));
+  assert.ok(pendingReminder(task, "2026-11-25"));
+  assert.ok(!pendingReminder({ ...task, doneDay: dayOf(now) }, "2026-11-25"));
+  const later = postponeReminder(task, now.getTime());
+  assert.equal(later.time, task.time);
+  assert.ok(!pendingReminder(later, dayOf(now)));
+  assert.deepEqual(dueTasks([later], new Date(2026, 10, 25, 0, 3, 59)), []);
+  assert.deepEqual(dueTasks([later], new Date(2026, 10, 25, 0, 4)), [later]);
+});
+
+test("the open task list redraws when reminder data arrives elsewhere", async () => {
+  const { installFakeDom } = await import("./fakedom.mjs");
+  const { State } = await import("../src/core/state.ts");
+  const { Todos, hasPendingReminders } = await import("../src/core/todos.ts");
+  const { buildTasks } = await import("../src/views/tasks.ts");
+  installFakeDom();
+  const view = buildTasks({});
+  assert.equal(view.el.querySelector(".tk-item"), null);
+  try {
+    State.view = "tasks";
+    Todos.loaded = true;
+    Todos.tasks = [task({ title: "Recordatorio pendiente", notifiedDay: dayOf(new Date()) })];
+    assert.ok(hasPendingReminders());
+    view.sync();
+    assert.equal(view.el.querySelector(".tk-item").querySelector(".tk-title").textContent, "Recordatorio pendiente");
+  } finally {
+    State.view = "overview";
+    view.sync();
+    Todos.tasks = [];
+    Todos.loaded = false;
+  }
+});

@@ -29,6 +29,7 @@ pub struct Task {
     pub done_day: String,
     /// The day it was last reminded, so it is once a day.
     pub notified_day: String,
+    pub snoozed_until: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -87,6 +88,7 @@ fn clean(todo: Todo) -> Todo {
             daily: t.daily,
             done_day: clean_day(&t.done_day),
             notified_day: clean_day(&t.notified_day),
+            snoozed_until: t.snoozed_until,
         })
         .filter(|t| !t.id.is_empty() && seen.insert(t.id.clone()))
         .take(MAX_TASKS)

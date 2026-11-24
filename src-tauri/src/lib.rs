@@ -533,6 +533,13 @@ fn status_line_apply(
     Ok(backup)
 }
 
+/// Confirm a turn through the local Codex transcript when its Stop hook was missed.
+#[tauri::command]
+async fn codex_turn_result(path: String, session_id: String, turn_id: String) -> Option<serde_json::Value> {
+    tauri::async_runtime::spawn_blocking(move || codex_plan::turn_result(&path, &session_id, &turn_id))
+        .await.ok().flatten()
+}
+
 /// Codex plan usage, asked of the Codex CLI (`codex app-server`) when its pill
 /// shows. Off the main thread: it can take a few seconds.
 #[tauri::command]
@@ -641,9 +648,12 @@ async fn ingest_file(path: String) -> Result<DroppedFile, String> {
 
 #[cfg(windows)]
 #[tauri::command]
-async fn drag_shelf_file(path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || files::drag_out(&path))
-        .await.map_err(|error| error.to_string())?
+async fn drag_shelf_file(app: AppHandle, path: String) -> Result<bool, String> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = send.send(files::drag_out(&path));
+    }).map_err(|error| error.to_string())?;
+    receive.await.map_err(|error| error.to_string())?
 }
 
 /// The island may only ask whether a key exists — never read it.
@@ -988,6 +998,7 @@ pub fn run() {
             status_line_preview,
             status_line_apply,
             codex_plan_usage,
+            codex_turn_result,
             approval_decision,
             approval_answer,
             approval_ack,

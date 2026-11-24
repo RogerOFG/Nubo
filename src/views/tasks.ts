@@ -10,14 +10,17 @@ import { ICONS } from "./icons";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import {
-  Todos, counts, dayOf, isDone, isOverdue, loadTodos, newId, saveTodos, tasksFor, type Note, type Task,
+  Todos, counts, dayOf, isDone, isOverdue, loadTodos, newId, pendingReminder, postponeReminder, saveTodos, tasksFor, type Note, type Task,
 } from "../core/todos";
-import { reminding } from "../island/todo";
 import { t, tl } from "../i18n/i18n";
 import type { ViewActions, ViewHost } from "./views";
 
 const MAX_TITLE = 120;
 const MAX_NOTE = 5000;
+
+function reminderTime(task: Task): string {
+  return task.snoozedUntil ? new Date(task.snoozedUntil).toTimeString().slice(0, 5) : task.time;
+}
 
 export function buildTasks(actions: ViewActions): ViewHost {
   // ── Tasks card ──────────────────────────────────────────────────────────────
@@ -75,7 +78,7 @@ export function buildTasks(actions: ViewActions): ViewHost {
   const el = h("div", { class: "view" }, h("div", { class: "tk-row" }, taskCard, noteCard));
 
   // ── State ───────────────────────────────────────────────────────────────────
-  let editingTask: { id: string | null; daily: boolean } | null = null;
+  let editingTask: { id: string | null; daily: boolean; shownTime: string } | null = null;
   let editingNote: { id: string | null } | null = null;
   let loading = false;
   let timer: number | null = null;
@@ -91,6 +94,7 @@ export function buildTasks(actions: ViewActions): ViewHost {
   async function persist(next: { tasks?: Task[]; notes?: Note[] }): Promise<boolean> {
     const ok = await saveTodos({ tasks: next.tasks ?? Todos.tasks, notes: next.notes ?? Todos.notes });
     if (!ok) Sound.play("error");
+    else State.notify();
     render();
     return ok;
   }
@@ -102,9 +106,10 @@ export function buildTasks(actions: ViewActions): ViewHost {
 
   function openTask(task: Task | null) {
     closeNote(false);
-    editingTask = { id: task?.id ?? null, daily: task?.daily ?? false };
+    const shownTime = task ? reminderTime(task) : "";
+    editingTask = { id: task?.id ?? null, daily: task?.daily ?? false, shownTime };
     taskTitle.value = task?.title ?? "";
-    taskTime.value = task?.time ?? "";
+    taskTime.value = shownTime;
     taskDelete.style.display = task ? "" : "none";
     paintDaily();
     render();
@@ -128,14 +133,16 @@ export function buildTasks(actions: ViewActions): ViewHost {
     const id = editingTask.id;
     const old = id ? Todos.tasks.find((x) => x.id === id) : undefined;
     const time = taskTime.value;
+    const keepSchedule = old != null && editingTask.shownTime === time;
     const entry: Task = {
       id: id ?? newId(),
       title,
-      time,
+      time: keepSchedule ? old.time : time,
       daily: editingTask.daily,
       doneDay: old?.doneDay ?? "",
       // A changed time is a new reminder, even if today's had been given.
-      notifiedDay: old && old.time === time ? old.notifiedDay : "",
+      notifiedDay: keepSchedule ? old.notifiedDay : "",
+      snoozedUntil: keepSchedule ? old.snoozedUntil : undefined,
     };
     const tasks = id ? Todos.tasks.map((x) => (x.id === id ? entry : x)) : [...Todos.tasks, entry];
     if (await persist({ tasks })) closeTask();
@@ -181,7 +188,12 @@ export function buildTasks(actions: ViewActions): ViewHost {
   }
 
   // ── Drawing ─────────────────────────────────────────────────────────────────
+  let renderedTasks: readonly Task[];
+  let renderedNotes: readonly Note[];
+
   function render() {
+    renderedTasks = Todos.tasks;
+    renderedNotes = Todos.notes;
     const now = new Date();
     const day = dayOf(now);
     const [done, total] = counts(Todos.tasks, day);
@@ -201,14 +213,27 @@ export function buildTasks(actions: ViewActions): ViewHost {
         e.stopPropagation();
         void toggleDone(task);
       });
-      const late = isOverdue(task, now);
+      const pending = pendingReminder(task, day);
+      const late = isOverdue(task, now) && !task.snoozedUntil;
+      const postpone = pending ? h("button", {
+        class: "tk-snooze", text: "+5 min",
+        title: t("in {m} min", { m: 5 }),
+        onclick: (event: Event) => {
+          event.stopPropagation();
+          void persist({ tasks: Todos.tasks.map((entry) => entry.id === task.id ? postponeReminder(entry) : entry) });
+        },
+      }) : null;
       const row = h(
         "div",
-        { class: `tk-item${isOn ? " done" : ""}${reminding(task.id) ? " ring" : ""}` },
+        { class: `tk-item${isOn ? " done" : ""}${pending ? " ring" : ""}` },
         check,
         h("span", { class: "tk-title", text: task.title }),
-        task.time ? h("span", { class: late ? "tk-when late" : "tk-when", text: task.time }) : null,
+        task.time ? h("span", {
+          class: late ? "tk-when late" : "tk-when",
+          text: reminderTime(task),
+        }) : null,
         task.daily ? h("span", { class: "tk-rep" }, svg(ICONS.arrowClockwise, 11, { stroke: 2 })) : null,
+        postpone,
       );
       row.addEventListener("click", () => openTask(task));
       taskList.append(row);
@@ -298,6 +323,7 @@ export function buildTasks(actions: ViewActions): ViewHost {
         keyboard();
       }
       if (shown && !Todos.loaded) void reload();
+      if (shown && (renderedTasks !== Todos.tasks || renderedNotes !== Todos.notes)) render();
       // Times turn red as they pass: redrawn each half minute while the tab is on screen.
       if (shown && timer == null) timer = window.setInterval(() => !editing() && State.view === "tasks" && render(), 30_000);
       else if (!shown && timer != null) {

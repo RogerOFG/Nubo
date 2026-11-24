@@ -250,6 +250,17 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         .unwrap_or_default()
         .to_string();
 
+    if payload["nubo_agent"] == "codex" {
+        let session = payload["session_id"].as_str().unwrap_or("").to_owned();
+        let path = payload["transcript_path"].as_str().unwrap_or("").to_owned();
+        let guardian = tokio::task::spawn_blocking(move || crate::codex_plan::is_guardian(&path, &session))
+            .await.unwrap_or(false);
+        if guardian {
+            pipe.finish();
+            return;
+        }
+    }
+
     note_session_window(&pipe, &payload, &event);
     crate::herdr::observe(&payload, &event);
     // Counts for the weekly recap — never the command, path or prompt itself.

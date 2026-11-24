@@ -19,7 +19,7 @@ export class IslandStateMachine {
   set homeToPetitDelay(seconds: number) {
     if (!Number.isFinite(seconds) || seconds < 0 || seconds === this.homeDelay) return;
     this.homeDelay = seconds;
-    if (this.state === "home" && this.homeCollapse != null) this.scheduleHomeCollapse();
+    if (this.homeCollapse != null && this.alertHomeDelay() == null) this.scheduleHomeCollapse();
   }
   /** petit → hidden delay, seconds. */
   petitToHiddenDelay = 60;
@@ -56,7 +56,8 @@ export class IslandStateMachine {
    */
   homeCollapseDueAt: number | null = null;
   homeCollapseDurationMs = 0;
-  minimumHomeDelay: () => number = () => 0;
+  keepHomeOpen: () => boolean = () => false;
+  alertHomeDelay: () => number | null = () => null;
 
   private homeDelay = 15;
   private byHover = false;
@@ -182,16 +183,16 @@ export class IslandStateMachine {
 
   private scheduleHomeCollapse() {
     this.clear("homeCollapse");
-    if (this.pinned) return;
-    const delay = this.byHover ? this.hoverCloseDelay : this.homeDelay;
-    const ms = Math.max(delay, this.minimumHomeDelay()) * 1000;
+    if (this.pinned || this.keepHomeOpen()) return;
+    const delay = this.alertHomeDelay() ?? (this.byHover ? this.hoverCloseDelay : this.homeDelay);
+    const ms = delay * 1000;
     this.homeCollapseDurationMs = ms;
     this.homeCollapseDueAt = performance.now() + ms;
     this.homeCollapse = window.setTimeout(() => {
       this.homeCollapse = null;
       this.homeCollapseDueAt = null;
       // An alert pinned while the countdown ran keeps the island open.
-      if (this.state === "home" && !this.pinned) {
+      if (this.state === "home" && !this.pinned && !this.keepHomeOpen()) {
         this.byHover = false;
         this.transition("petit");
       }

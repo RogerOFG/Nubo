@@ -5,6 +5,7 @@
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
+import { hasPendingReminders } from "../core/todos";
 import { State, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../nubo/minibots";
@@ -169,6 +170,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabDrop.classList.toggle("on", v === "upload");
       tabSnippets.classList.toggle("on", v === "snippets");
       tabTasks.classList.toggle("on", v === "tasks");
+      tabTasks.classList.toggle("task-reminder", hasPendingReminders());
       tabLaunch.classList.toggle("on", v === "launch");
       gearBtn.classList.toggle("on", v === "settings");
       clear(gearBtn);

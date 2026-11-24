@@ -403,7 +403,7 @@ test("open on hover: an island opened by an alert keeps the normal delay", () =>
 
 test("a completion can stay visible for ten seconds with the normal close set to one", () => {
   fsm.homeToPetitDelay = 1;
-  fsm.minimumHomeDelay = () => 10;
+  fsm.alertHomeDelay = () => 10;
   fsm.forceHome();
   fsm.mouseLeft();
   assert.equal(fsm.homeCollapseDurationMs, 10_000);
@@ -412,9 +412,32 @@ test("a completion can stay visible for ten seconds with the normal close set to
   seconds(0.1);
   assert.equal(fsm.state, "petit");
 
-  fsm.minimumHomeDelay = () => 0;
+  fsm.alertHomeDelay = () => null;
   fsm.forceHome();
   fsm.mouseLeft();
   seconds(1);
+  assert.equal(fsm.state, "petit");
+});
+
+test("an alert uses its own time even when the normal island stays open longer", () => {
+  fsm.homeToPetitDelay = 30;
+  fsm.alertHomeDelay = () => 10;
+  fsm.forceHome();
+  fsm.mouseLeft();
+  seconds(2);
+  fsm.homeToPetitDelay = 1;
+  assert.equal(fsm.homeCollapseDurationMs, 10_000);
+  seconds(8);
+  assert.equal(fsm.state, "petit");
+});
+
+test("a pending task reminder stays open and can still be closed explicitly", () => {
+  fsm.homeToPetitDelay = 1;
+  fsm.keepHomeOpen = () => true;
+  fsm.forceHome();
+  fsm.mouseLeft();
+  seconds(20);
+  assert.equal(fsm.state, "home");
+  fsm.forcePetit();
   assert.equal(fsm.state, "petit");
 });

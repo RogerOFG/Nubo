@@ -238,7 +238,9 @@ fn prepare(raw: &[u8], args: &Args, env: &dyn Fn(&str) -> Option<String>, cwd: &
     map.insert("hook_event_name".into(), Value::String(name.clone()));
 
     for field in DROPPED_FIELDS {
-        map.remove(*field);
+        if *field != "transcript_path" || args.agent != "codex" {
+            map.remove(*field);
+        }
     }
 
     if map.get("cwd").and_then(Value::as_str).map(str::is_empty).unwrap_or(true) && !cwd.is_empty() {
@@ -472,6 +474,15 @@ mod tests {
         assert_eq!(agent_tag("gemini", &desktop).as_deref(), Some("gemini"));
         assert_eq!(agent_tag("", &env_of(&[("CLAUDE_CODE_ENTRYPOINT", "cli")])), None);
         assert_eq!(agent_tag("", &env_of(&[])), None);
+    }
+
+    #[test]
+    fn only_codex_keeps_the_local_transcript_path() {
+        let raw = r#"{"hook_event_name":"UserPromptSubmit","transcript_path":"/tmp/rollout.jsonl"}"#;
+        let (codex, _) = run(raw, "codex", "");
+        assert_eq!(codex["transcript_path"], "/tmp/rollout.jsonl");
+        let (claude, _) = run(raw, "", "");
+        assert!(claude.get("transcript_path").is_none());
     }
 
     #[test]

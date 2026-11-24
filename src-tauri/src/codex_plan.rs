@@ -217,3 +217,163 @@ mod tests {
         assert_eq!(v, ["v20.11.1", "v20.1.0", "v18.20.4", "v9.12.0"]);
     }
 }
+
+/// Reads only the tail of a validated Codex session file. The rollout format is
+/// internal to Codex, so missing or unrecognized records leave the hooks in charge.
+pub fn turn_result(path: &str, session_id: &str, turn_id: &str) -> Option<Value> {
+    use std::io::{Seek, SeekFrom};
+
+    if turn_id.is_empty() {
+        return None;
+    }
+    let path = session_rollout(path, session_id)?;
+    let mut file = std::fs::File::open(path).ok()?;
+    let limit = 512 * 1024;
+    let offset = file.metadata().ok()?.len().saturating_sub(limit);
+    file.seek(SeekFrom::Start(offset)).ok()?;
+    let mut tail = Vec::new();
+    file.take(limit).read_to_end(&mut tail).ok()?;
+    completed_turn(&tail, turn_id)
+}
+
+fn session_rollout(hint: &str, session: &str) -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+
+    let home = std::env::var_os("CODEX_HOME").map(PathBuf::from).or_else(|| {
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .map(|base| PathBuf::from(base).join(".codex"))
+    })?;
+    let sessions = home.join("sessions");
+    let root = sessions.canonicalize().ok()?;
+    let hint = Path::new(hint);
+    let hint = if (hint.starts_with(&sessions) || hint.starts_with(&root))
+        && !hint.components().any(|part| part == std::path::Component::ParentDir)
+    {
+        hint
+    } else {
+        Path::new("")
+    };
+    find_rollout(&root, hint, session)
+}
+
+fn find_rollout(root: &std::path::Path, hint: &std::path::Path, session: &str) -> Option<std::path::PathBuf> {
+    use chrono::Datelike;
+    use std::path::Path;
+
+    if session.len() != 36 || !session.bytes().enumerate().all(|(index, byte)| {
+        if matches!(index, 8 | 13 | 18 | 23) { byte == b'-' } else { byte.is_ascii_hexdigit() }
+    }) {
+        return None;
+    }
+    let suffix = format!("-{session}.jsonl");
+    let validate = |candidate: &Path| {
+        let path = candidate.canonicalize().ok()?;
+        let name = path.file_name()?.to_str()?;
+        (path.starts_with(root) && name.starts_with("rollout-") && name.ends_with(&suffix)
+            && path.is_file()).then_some(path)
+    };
+    if let Some(path) = validate(hint) {
+        return Some(path);
+    }
+
+    // UUIDv7 carries the creation date. Codex names its folders in local
+    // time, which can put the creation on either side of the UTC date.
+    let ms = i64::from_str_radix(&format!("{}{}", &session[..8], &session[9..13]), 16).ok()?;
+    let day = chrono::DateTime::from_timestamp_millis(ms)?.date_naive();
+    for date in [Some(day), day.pred_opt(), day.succ_opt()].into_iter().flatten() {
+        let dir = root.join(format!("{:04}/{:02}/{:02}", date.year(), date.month(), date.day()));
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().ends_with(&suffix) {
+                if let Some(path) = validate(&entry.path()) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Codex's guardian runs on its own internal thread. Its hooks must never
+/// replace the conversation shown in the island.
+pub fn is_guardian(hint: &str, session: &str) -> bool {
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    static SESSIONS: Mutex<VecDeque<(String, bool)>> = Mutex::new(VecDeque::new());
+    if let Some((_, guardian)) = SESSIONS.lock().unwrap().iter().find(|(id, _)| id == session) {
+        return *guardian;
+    }
+    let Some(path) = session_rollout(hint, session) else { return false };
+    let Ok(file) = std::fs::File::open(path) else { return false };
+    let mut first = Vec::new();
+    if BufReader::new(file.take(256 * 1024)).read_until(b'\n', &mut first).is_err() {
+        return false;
+    }
+    let Some(guardian) = guardian_metadata(&first, session) else { return false };
+    let mut remembered = SESSIONS.lock().unwrap();
+    if remembered.len() >= 128 {
+        remembered.pop_front();
+    }
+    remembered.push_back((session.to_owned(), guardian));
+    guardian
+}
+
+fn guardian_metadata(line: &[u8], session: &str) -> Option<bool> {
+    let record: Value = serde_json::from_slice(line).ok()?;
+    if record["type"] != "session_meta" || record["payload"]["id"] != session {
+        return None;
+    }
+    Some(record["payload"]["source"]["subagent"]["other"] == "guardian")
+}
+
+fn completed_turn(tail: &[u8], turn_id: &str) -> Option<Value> {
+    for line in tail.split(|byte| *byte == b'\n').rev() {
+        let Ok(record) = serde_json::from_slice::<Value>(line) else { continue };
+        if record["type"] != "event_msg" {
+            continue;
+        }
+        let event = &record["payload"];
+        let Some(id) = event["turn_id"].as_str() else { continue };
+        if event["root_turn_id"].as_str().is_some_and(|root| root != id) {
+            continue;
+        }
+        match event["type"].as_str() {
+            Some("task_started") => return None,
+            Some("task_complete") if id == turn_id => {
+                let message = event["last_agent_message"].as_str().unwrap_or("");
+                return Some(json!({ "event": "Stop", "message": message.chars().take(2000).collect::<String>() }));
+            }
+            Some("turn_aborted") if id == turn_id => return Some(json!({ "event": "Interrupt" })),
+            Some("task_complete" | "turn_aborted") => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+#[test]
+fn rollout_only_confirms_the_latest_main_turn() {
+    let current = br#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":"done"}}"#;
+    assert_eq!(completed_turn(current, "t1").unwrap()["message"], "done");
+    assert!(completed_turn(current, "t2").is_none());
+    let resumed = [current.as_slice(), br#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"t2"}}"#.as_slice()].join(&b'\n');
+    assert!(completed_turn(&resumed, "t1").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn codex_session_lookup_works_without_a_hook_path() {
+    let root = std::env::temp_dir().join(format!("nubo-rollout-{}", std::process::id()));
+    let dir = root.join("2026/11/23");
+    std::fs::create_dir_all(&dir).unwrap();
+    let id = "01a20ad3-3e27-7500-b4af-8cc40c405084";
+    let file = dir.join(format!("rollout-test-{id}.jsonl"));
+    let content = json!({ "type": "session_meta", "payload": { "id": id, "source": { "subagent": { "other": "guardian" } } } });
+    std::fs::write(&file, content.to_string()).unwrap();
+    let root = root.canonicalize().unwrap();
+    let path = find_rollout(&root, std::path::Path::new(""), id).unwrap();
+    assert_eq!(path, file.canonicalize().unwrap());
+    assert_eq!(guardian_metadata(&std::fs::read(path).unwrap(), id), Some(true));
+    std::fs::remove_file(file).unwrap();
+}

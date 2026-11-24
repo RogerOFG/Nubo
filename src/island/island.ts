@@ -16,6 +16,7 @@ import {
 } from "../core/layout";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
+import { hasPendingReminders } from "../core/todos";
 import { SPOTIFY_ID, Spotify, islandDances } from "../core/spotify";
 import { BOT_STATES, BotEngine, hexToRGB } from "../nubo/engine";
 import { Greeting } from "../nubo/greeting";
@@ -32,7 +33,7 @@ import { buildSessionDropList, type SessionDropList } from "../views/session-dro
 import { DROP_TEXT_RIGHT_WITH_LIST, dropTargetAt, dropTargets } from "../core/launch";
 import { IslandStateMachine } from "./fsm";
 import { refreshHookPills } from "./integrations";
-import { CODEX_COMPLETION_SECONDS, restoreAlertFocus } from "./hooks";
+import { RESPONSE_ALERT_SECONDS, restoreAlertFocus } from "./hooks";
 import { DesktopLink } from "./desktop";
 import type { ViewCommand } from "./shortcuts";
 import { DRAG_THRESHOLD } from "../nubo/desktop-logic";
@@ -91,6 +92,8 @@ export class Island {
   private lyricTimer?: number;
   /** The closed island's one line (core/closed.ts), and what it last showed. */
   private closedEl!: HTMLElement;
+  private reminderDot!: HTMLElement;
+  private showingPendingTasks = false;
   private closedDot!: HTMLElement;
   private closedText!: HTMLElement;
   private closedKey = "";
@@ -185,7 +188,7 @@ export class Island {
       this.onGreetingDone?.();
     };
     // Lyrics showing: the compact island stays (see IslandStateMachine.keepCompact).
-    this.fsm.keepCompact = () => State.spotifyPlaying && lyricsEnabled();
+    this.fsm.keepCompact = () => hasPendingReminders() || (State.spotifyPlaying && lyricsEnabled());
     State.subscribe(() => {
       this.dirty = true;
       this.ensureRunning();
@@ -344,6 +347,7 @@ export class Island {
 
     this.wakeStrip = h("div", { id: "wake-strip" });
     this.closedDot = h("span", { class: "dot" });
+    this.reminderDot = h("span", { id: "task-reminder-dot", "aria-hidden": "true", hidden: true });
     this.closedText = h("span", { class: "text" });
     this.closedEl = h("div", { id: "island-closed" }, this.closedDot, this.closedText);
     this.botGlow = h("div", { id: "bot-glow" });
@@ -406,6 +410,7 @@ export class Island {
       this.lyricEl,
       this.lyricProbe,
       this.closedEl,
+      this.reminderDot,
       this.countdown,
     );
 
@@ -424,8 +429,9 @@ export class Island {
   private wireFsm() {
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
     this.fsm.openOnHover = State.settings.openOnHover;
-    this.fsm.minimumHomeDelay = () => State.view === "finished" && State.focusId === "agent_codex"
-      ? CODEX_COMPLETION_SECONDS : 0;
+    this.fsm.keepHomeOpen = () => State.view === "tasks" && hasPendingReminders();
+    this.fsm.alertHomeDelay = () => State.view === "finished" || State.view === "error"
+      ? RESPONSE_ALERT_SECONDS : null;
     this.fsm.onTransition = (from, to) => {
       // The greeting is over, however it ended: back to his desktop spot.
       if (from === "nubo" && to !== "nubo") this.desktop.launch();
@@ -538,12 +544,12 @@ export class Island {
       State.notify();
       return;
     }
-    const leavingCodexCompletion = view !== "finished" && this.fsm.minimumHomeDelay() > 0;
+    const wasTimedAlert = this.fsm.alertHomeDelay() != null || this.fsm.keepHomeOpen();
     const grew = VIEW_LAYOUTS[view].height >= VIEW_LAYOUTS[State.view].height;
     State.view = view;
     State.lastActivity = performance.now();
     this.animateGeometry(!grew);
-    if (leavingCodexCompletion && !this.wasInIsland) this.fsm.mouseLeft();
+    if (!this.wasInIsland && (wasTimedAlert || this.fsm.alertHomeDelay() != null)) this.fsm.mouseLeft();
     State.notify();
   }
 
@@ -566,7 +572,7 @@ export class Island {
     this.fsm.pinned = State.isPinned;
     this.fsm.forceHome();
     this.expand(view);
-    if (this.fsm.minimumHomeDelay() > 0 && !this.wasInIsland) this.fsm.mouseLeft();
+    if (this.fsm.alertHomeDelay() != null && !this.wasInIsland) this.fsm.mouseLeft();
   }
 
   /** A new Nubo waits and Nubo has nothing else to say (he is blue). */
@@ -580,6 +586,7 @@ export class Island {
    * permission or question always comes first.
    */
   private openingView(): IslandViewName {
+    if (!State.pendingApproval && hasPendingReminders()) return "tasks";
     return this.updateHintOn() ? "update" : State.defaultView();
   }
 
@@ -1618,6 +1625,13 @@ export class Island {
     // A wardrobe try-on never outlives the wardrobe.
     if (State.wardrobePreview && !(expanded && State.view === "wardrobe")) State.wardrobePreview = null;
 
+    const pendingReminder = hasPendingReminders();
+    const showingPendingTasks = expanded && State.view === "tasks" && pendingReminder;
+    if (this.showingPendingTasks && !showingPendingTasks && expanded && State.view === "tasks" && !this.wasInIsland) {
+      this.fsm.mouseLeft();
+    }
+    this.showingPendingTasks = showingPendingTasks;
+    this.reminderDot.hidden = State.mode !== "compact" || !pendingReminder;
     this.header.sync();
     const here = tabIndex(State.view);
     for (const [name, view] of this.views) {

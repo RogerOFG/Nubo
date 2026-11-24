@@ -74,7 +74,7 @@ export function buildUpload(actions: ViewActions): ViewHost {
       clear(list);
       for (const entry of State.shelfFiles) {
         const item = h("div", { class: entry.ready ? "shelf-file ready" : "shelf-file", title: entry.name },
-          svg(ICONS.doc, 14), h("span", { text: entry.name }));
+          svg(ICONS.doc, 22), h("span", { text: entry.name }));
         if (entry.ready) {
           if (HOST_OS === "windows") {
             item.addEventListener("pointerdown", (start) => {
@@ -98,6 +98,11 @@ export function buildUpload(actions: ViewActions): ViewHost {
                 if (State.shelfDragging) return;
                 State.shelfDragging = true;
                 void Bridge.dragShelfFile(entry.path)
+                  .then((moved) => {
+                    if (!moved) return;
+                    State.shelfFiles = State.shelfFiles.filter((file) => file !== entry);
+                    if (State.promptFile?.path === entry.path) State.promptFile = null;
+                  })
                   .catch((err) => { State.shelfError = String(err).replace(/^Error:\s*/, ""); })
                   .finally(() => {
                     State.shelfDragging = false;
@@ -133,7 +138,7 @@ export function buildUpload(actions: ViewActions): ViewHost {
             State.notify();
           },
         }, svg(ICONS.xmark, 13));
-        list.append(h("div", { class: "shelf-row" }, item, ask, remove));
+        list.append(h("div", { class: "shelf-tile" }, item, h("div", { class: "shelf-actions" }, ask, remove)));
       }
       list.scrollTop = scroll;
     },

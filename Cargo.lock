@@ -2895,9 +2895,10 @@ dependencies = [
 
 [[package]]
 name = "nubo"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "arboard",
+ "chrono",
  "cpal",
  "dbus",
  "futures-util",
@@ -2926,13 +2927,14 @@ dependencies = [
  "webpki-roots 1.0.9",
  "webview2-com",
  "windows 0.61.3",
+ "windows-core 0.61.2",
  "windows-core 0.62.2",
  "x11rb",
 ]
 
 [[package]]
 name = "nubo-hook"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "libc",
  "serde_json",
