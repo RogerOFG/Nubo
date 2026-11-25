@@ -28,6 +28,7 @@ jobs:
           $lib = node scripts/verify-native.mjs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "SHERPA_ONNX_LIB_DIR=$lib" >> $env:GITHUB_ENV
+      - run: cargo build --locked --release -p nubo-hook
       - run: cargo test --workspace --locked
 
   dependency-audit:
