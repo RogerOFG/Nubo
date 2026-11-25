@@ -82,7 +82,7 @@ export interface HubOptions {
 const DEFAULT_STATUS: FlowStatus = {
   prefs: {
     enabled: false, key: "right_ctrl", keyCombo: [], edge: "bottom", hidePill: false, mic: "", keepDays: 30, cleanup: false,
-    defaultStyle: "natural", summaryEngine: "claude", openAtLaunch: true, voice: false, voiceOutput: "system", voiceGender: "female", muteOthers: true,
+    defaultStyle: "natural", summaryEngine: "off", openAtLaunch: true, voice: false, voiceOutput: "system", voiceGender: "female", muteOthers: true,
     oneTapHandsFree: false,
   },
   models: { parakeet: { state: "missing" }, downloadMb: 700 },
@@ -173,7 +173,7 @@ export async function startHub(root: HTMLElement, opts: HubOptions) {
     if (renderer) {
       await renderer(page_, ctx);
     } else {
-      page_.append(hero(def.id, def.title(), def.subtitle?.() ?? null));
+      page_.append(hero(def.id, def.title(), def.subtitle?.() ?? null, [], def.id === "general"));
       const container = h("div", { id: "settings-root" });
       page_.append(container);
       await opts.renderNotch(def.id, container);

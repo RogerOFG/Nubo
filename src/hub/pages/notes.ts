@@ -101,7 +101,7 @@ export async function notesPage(page: HTMLElement, ctx: HubContext) {
       if (n.status === "recording") item.querySelector(".m")!.prepend(h("span", { class: "hub-rec", style: "margin-inline-end:6px" }));
       listEl.append(item);
     }
-    listEl.append(h("div", { style: "flex:1" }), h("div", { class: "hub-note", style: "padding:10px;border-radius:10px;background:rgba(255,255,255,0.04)", text: t("Everything stays on this computer. Tell the people in the call that you are recording.") }));
+    listEl.append(h("div", { style: "flex:1" }), h("div", { class: "hub-note", style: "padding:10px;border-radius:10px;background:rgba(255,255,255,0.04)", text: t("Tell the people in the call that you are recording.") }));
   }
 
   function drawDetail() {
@@ -235,9 +235,13 @@ export async function notesPage(page: HTMLElement, ctx: HubContext) {
   function summary(note: Note): HTMLElement {
     const el = h("div", { style: "display:flex;flex-direction:column;gap:14px;align-items:flex-start" });
     const busy = state.working.includes(note.id);
+    const summaryButton = (label: string, kind: "" | "primary") => h("div", { class: "hub-summary-action" },
+      h("p", { class: "hub-note", text: t("Claude summaries send the transcript to the configured endpoint. The audio stays on this computer.") }),
+      button(label, () => void FlowBridge.summarize(note.id), kind, true),
+    );
     if (!note.summary && note.keyPoints.length === 0 && note.todos.length === 0) {
       el.append(h("div", { class: "hub-note", text: busy ? t("Writing the summary…") : t("No summary yet.") }));
-      if (!busy) el.append(button(t("Write the summary"), () => void FlowBridge.summarize(note.id), "primary", true));
+      if (!busy) el.append(summaryButton(t("Write the summary"), "primary"));
       return el;
     }
     if (note.summary) el.append(h("div", { class: "hub-card", style: "font-size:14px;line-height:1.55;color:var(--hub-body);align-self:stretch", text: note.summary }));
@@ -256,7 +260,8 @@ export async function notesPage(page: HTMLElement, ctx: HubContext) {
         el.append(h("label", { class: "hub-todo" }, box, h("span", {}, h("span", { text: todo.text, style: todo.done ? "text-decoration:line-through;opacity:.6" : "" }), extra ? h("div", { class: "who", text: extra }) : null)));
       }
     }
-    el.append(button(busy ? t("Writing the summary…") : t("Write the summary again"), () => void FlowBridge.summarize(note.id), "", true));
+    if (busy) el.append(h("p", { class: "hub-note", text: t("Writing the summary…") }));
+    else el.append(summaryButton(t("Write the summary again"), ""));
     return el;
   }
 

@@ -11,6 +11,7 @@ mod cli_relay;
 mod codex_plan;
 mod config_file;
 mod desktop;
+mod dock;
 mod files;
 mod flow;
 mod github;
@@ -104,14 +105,15 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
-    let (settings, screen_changed, autostart_changed, shortcuts_changed) = {
+    let (settings, autostart_changed, shortcuts_changed) = {
         let mut current = shared.settings.lock().unwrap();
-        let screen_changed = current.screen != settings.screen;
         let autostart_changed = current.autostart != settings.autostart;
         let shortcuts_changed = current.shortcuts != settings.shortcuts;
         // Where Nubo sits on the desktop is desktop.rs's to say, not a webview's.
         let mut settings = settings.clone();
         settings.desktop_nubo = current.desktop_nubo.clone();
+        settings.screen = current.screen.clone();
+        settings.island_dock = current.island_dock;
         // Same for the phone link: only its own commands turn it on or off.
         settings.phone_link = current.phone_link;
         settings.phone_chat = current.phone_chat;
@@ -127,22 +129,17 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         // Antigravity approvals: only their own switch changes them (agy_approvals.rs).
         settings.agy_approvals_enabled = current.agy_approvals_enabled;
         *current = settings;
-        (current.clone(), screen_changed, autostart_changed, shortcuts_changed)
+        if let Err(err) = settings::save(&current) {
+            log::line(format!("could not save settings: {err}"));
+        }
+        (current.clone(), autostart_changed, shortcuts_changed)
     };
-    if let Err(err) = settings::save(&settings) {
-        log::line(format!("could not save settings: {err}"));
-    }
     if autostart_changed {
         let manager = app.autolaunch();
         let result = if settings.autostart { manager.enable() } else { manager.disable() };
         if let Err(err) = result {
             eprintln!("[nubo] autostart: {err}");
         }
-    }
-    if screen_changed {
-        let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
-        let size = *shared.gate.collapsed_size.lock().unwrap();
-        island::apply_geometry(&app, &settings.screen, collapsed.then_some(size));
     }
     integrations::settings_saved(&app, &settings.active_integrations);
     spotify::sync(&app, &settings.active_integrations);
@@ -179,10 +176,14 @@ fn language_changed(app: &AppHandle) {
 /// cursor poll; anything else → full panel and 60 Hz polling.
 #[tauri::command]
 fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool, width: Option<f64>, height: Option<f64>) {
+    if collapsed { island::cancel_move(&app); }
     let pref = shared.settings.lock().unwrap().screen.clone();
     shared.gate.collapsed.store(collapsed, Ordering::Relaxed);
     // An older page sends no size: the wake strip, as before.
-    let size = island::clamp_collapsed((width.unwrap_or(island::STRIP_W), height.unwrap_or(island::STRIP_H)));
+    let size = island::clamp_collapsed(
+        (width.unwrap_or(island::STRIP_W), height.unwrap_or(island::STRIP_H)),
+        island::placement(&app).edge,
+    );
     *shared.gate.collapsed_size.lock().unwrap() = size;
     // The poll stops first: a tick of it after this could make the closed
     // island click-through again (see spawn_cursor_poll).
@@ -217,6 +218,7 @@ fn focus_window(app: AppHandle, focused: bool) {
 
 #[tauri::command]
 fn reposition(app: AppHandle, shared: State<Shared>) {
+    if shared.gate.is_moving() { return; }
     let pref = shared.settings.lock().unwrap().screen.clone();
     let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
     let size = *shared.gate.collapsed_size.lock().unwrap();
@@ -336,17 +338,30 @@ fn open_in_vscode(path: Option<String>) -> bool {
 /// folder in VS Code, as before. A session in herdr also gets its pane selected,
 /// and never falls back to VS Code.
 #[tauri::command]
-fn open_session(session_id: Option<String>, path: Option<String>) -> bool {
+fn open_session(session_id: Option<String>, path: Option<String>, project_name: Option<String>) -> bool {
     let in_herdr = session_id.as_deref().is_some_and(herdr::focus);
-    let Some(owners) = session_id.as_deref().and_then(session_window::lookup) else {
-        return in_herdr || open_in_vscode(path);
-    };
     let folder = path.as_deref().map(session_window::folder_name).unwrap_or_default().to_string();
+    let owners = session_id.as_deref().and_then(session_window::lookup);
     #[cfg(windows)]
     {
-        if platform::focus_session_window(&owners, &folder) || in_herdr {
+        if in_herdr {
             return true;
         }
+        let project = project_name.as_deref().unwrap_or_default();
+        if session_id.as_deref().is_some_and(session_window::is_warp) {
+            let focused = platform::focus_warp_window(owners.as_deref().unwrap_or_default(), &folder, project, true);
+            log::line(format!("open session: Warp host, focused={focused}"));
+            return focused;
+        }
+        if owners.as_deref().is_some_and(|pids| platform::focus_session_window(pids, &folder)) {
+            log::line("open session: remembered window");
+            return true;
+        }
+        if platform::focus_warp_window(&[], &folder, project, false) {
+            log::line("open session: Warp window matched project");
+            return true;
+        }
+        log::line("open session: falling back to VS Code");
         open_in_vscode(path)
     }
     // Linux asks the display server, KWin or the terminal, which can take a
@@ -354,6 +369,10 @@ fn open_session(session_id: Option<String>, path: Option<String>) -> bool {
     // opens when none of them could bring the window forward.
     #[cfg(target_os = "linux")]
     {
+        let _ = project_name;
+        let Some(owners) = owners else {
+            return in_herdr || open_in_vscode(path);
+        };
         std::thread::spawn(move || {
             if !platform::focus_session_window(&owners, &folder) && !in_herdr {
                 open_in_vscode(path);
@@ -698,6 +717,9 @@ fn secret_set(app: AppHandle, key: String, value: String) -> Result<(), String> 
     if key == local_chat::CUSTOM_KEY {
         return Err("use local_set_key".into());
     }
+    if key == "n8n-url" && !value.trim().is_empty() {
+        integrations::n8n_base(&value)?;
+    }
     let before = (key == "github-token").then(|| secrets::get(&key));
     secrets::set(&key, &value)?;
     if key == claude::KEY {
@@ -792,7 +814,7 @@ fn shortcuts_suspend(app: AppHandle, shared: State<Shared>, suspended: bool) {
 /// for the *same* arguments as the island (see `additionalBrowserArgs` in
 /// tauri.conf.json) — a mismatch makes the second window come up blank, with no
 /// error anywhere.
-pub(crate) const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
+pub(crate) const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI --autoplay-policy=no-user-gesture-required";
 
 /// In a dev build the pages are served by Vite, so the second window needs the
 /// absolute dev URL; a bundled build resolves it inside the app bundle.
@@ -972,6 +994,10 @@ pub fn run() {
             set_island_rect,
             focus_window,
             reposition,
+            island::set_island_placement,
+            island::center_island,
+            island::begin_island_move,
+            island::cancel_island_move,
             fit_zoom,
             hub_shown,
             list_monitors,

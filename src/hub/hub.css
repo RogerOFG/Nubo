@@ -1174,3 +1174,9 @@ button.hub-icon svg {
 ::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.3);
 }
+
+.hub-summary-action {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}

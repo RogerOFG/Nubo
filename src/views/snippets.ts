@@ -44,7 +44,7 @@ export function buildSnippets(actions: ViewActions): ViewHost {
 
   const body = h("div", { class: "drop-body snip-body" }, head, chips, editor, hint);
   const card = h("div", { class: "card drop-card" }, frame, body);
-  const el = h("div", { class: "view" }, card);
+  const el = h("div", { class: "view snippets-view" }, card);
 
   let editMode = false;
   /** The editor is open: for this chip, or for a new one when `editingId` is null. */

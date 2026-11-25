@@ -15,6 +15,7 @@ export interface SessionDropList {
   el: HTMLElement;
   /** Shown while a file is over the drop card and a session can take it. */
   sync(show: boolean): void;
+  targetAt(x: number, y: number): string | null;
 }
 
 export function buildSessionDropList(): SessionDropList {
@@ -25,6 +26,14 @@ export function buildSessionDropList(): SessionDropList {
 
   return {
     el,
+    targetAt(x, y) {
+      if (!el.classList.contains("on")) return null;
+      const target = rows.find((row) => {
+        const r = row.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+      });
+      return target?.dataset.session ?? null;
+    },
     sync(show) {
       const targets = show ? dropTargets(State.tasks) : [];
       el.classList.toggle("on", targets.length > 0);
@@ -36,7 +45,7 @@ export function buildSessionDropList(): SessionDropList {
         rows.forEach((r) => r.remove());
         rows = targets.map((task, i) => {
           const r = layout.rows[i];
-          const row = h("div", { class: "sd-row" }, dot(task.color, 7), h("span", { text: task.name }));
+          const row = h("div", { class: "sd-row", "data-session": task.id }, dot(task.color, 7), h("span", { text: task.name }));
           row.style.cssText = `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px`;
           el.append(row);
           return row;

@@ -54,7 +54,7 @@ export function buildUpload(actions: ViewActions): ViewHost {
     frame,
     empty, shelf,
   );
-  const el = h("div", { class: "view" }, card);
+  const el = h("div", { class: "view drop-view" }, card);
 
   return {
     el,

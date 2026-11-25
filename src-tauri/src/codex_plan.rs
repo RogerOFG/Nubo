@@ -294,6 +294,57 @@ fn find_rollout(root: &std::path::Path, hint: &std::path::Path, session: &str) -
     None
 }
 
+/// A null transcript identifies an in-memory thread in current Codex hooks.
+/// Older hooks may omit the field entirely; in that case only skip a known
+/// internal result shape, and only if there is no saved rollout for the ID.
+pub fn ignore_hook(payload: &Value) -> bool {
+    let event = payload["hook_event_name"].as_str().unwrap_or_default();
+    let session = payload["session_id"].as_str().unwrap_or_default();
+    let path = payload["transcript_path"].as_str().unwrap_or_default();
+    if is_guardian(path, session) {
+        return true;
+    }
+    if event == "PermissionRequest" || !path.is_empty() {
+        return false;
+    }
+    let without_transcript = payload.get("transcript_path").is_some_and(|value| {
+        value.is_null() || value.as_str() == Some("")
+    });
+    let suggestions = event == "Stop" && payload["last_assistant_message"]
+        .as_str().is_some_and(is_suggestions_result);
+    (without_transcript || suggestions) && session_rollout("", session).is_none()
+}
+
+fn is_suggestions_result(text: &str) -> bool {
+    serde_json::from_str::<Value>(text).ok()
+        .and_then(|value| value.as_object().map(|object| {
+            object.len() == 1 && object.get("suggestions").is_some_and(Value::is_array)
+        })).unwrap_or(false)
+}
+
+#[cfg(test)]
+#[test]
+fn codex_ignores_unpersisted_internal_alerts() {
+    let stop = json!({
+        "hook_event_name": "Stop",
+        "session_id": "no-such-rollout",
+        "last_assistant_message": "{\"suggestions\":[]}"
+    });
+    assert!(ignore_hook(&stop));
+    let temporary = json!({
+        "hook_event_name": "UserPromptSubmit", "session_id": "no-such-rollout",
+        "transcript_path": null
+    });
+    assert!(ignore_hook(&temporary));
+    let mut ordinary = stop;
+    ordinary["last_assistant_message"] = json!("Finished the changes.");
+    assert!(!ignore_hook(&ordinary));
+    ordinary["hook_event_name"] = json!("PermissionRequest");
+    ordinary["transcript_path"] = Value::Null;
+    assert!(!ignore_hook(&ordinary));
+    assert!(!is_suggestions_result(r#"{"suggestions": [], "answer": "Done"}"#));
+}
+
 /// Codex's guardian runs on its own internal thread. Its hooks must never
 /// replace the conversation shown in the island.
 pub fn is_guardian(hint: &str, session: &str) -> bool {

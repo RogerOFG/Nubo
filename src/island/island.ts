@@ -2,7 +2,7 @@
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
 import { Tracked, Spring, clamp } from "../core/anim";
-import { currentLyricWindow, lyricsEnabled } from "../core/lyrics";
+import { currentLyrics, currentLyricWindow, lyricsEnabled, lyricsLoading, lyricsView, setLyricsBack, type LyricLine } from "../core/lyrics";
 import { Bridge, IS_TAURI, onDragDrop, type DragDropPayload } from "../core/bridge";
 import {
   CLOSED_BOT_D, CLOSED_H, closedContent, closedIsland, closedWidth, type ClosedContent,
@@ -14,19 +14,21 @@ import {
   QUESTION_PICKER_H,
   type BotEmoteName, type IslandMode, type IslandViewName,
 } from "../core/layout";
+import { dockRect, lateralEdge, type IslandEdge } from "../core/dock";
+import { HOST_OS } from "../core/pills";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { hasPendingReminders } from "../core/todos";
-import { SPOTIFY_ID, Spotify, islandDances } from "../core/spotify";
+import { SPOTIFY_ID, Spotify, isAd, islandDances } from "../core/spotify";
 import { BOT_STATES, BotEngine, hexToRGB } from "../nubo/engine";
 import { Greeting } from "../nubo/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../nubo/minibots";
 import { SeasonCache, parseOutfit } from "../nubo/wardrobe";
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq, uploadProgressCurve } from "../upload/sequence";
-import { dominantPct, planColor } from "../core/plan";
+import { dominantPct } from "../core/plan";
 import { language, t, tl } from "../i18n/i18n";
-import { claudeCompactPillVisible, closePlanCard, openPlanColor, planCardOpen } from "../views/usage";
+import { CLAUDE_PLAN_COLOR, claudeCompactPillVisible, claudePillVisible, closePlanCard, codexPillVisible, openPlanColor, planCardOpen } from "../views/usage";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { h } from "../views/dom";
 import { buildSessionDropList, type SessionDropList } from "../views/session-drop";
@@ -67,6 +69,11 @@ function tabIndex(view: IslandViewName): number {
 
 /** The compact island when nothing sits in its middle (Nubo, the plan gauge, the mini bots). */
 const SLIM_COMPACT_W = 240;
+const SIDE_COMPACT_W = 50;
+const SIDE_COMPACT_H = 126;
+const HORIZONTAL_GRIP_SPACE = 16;
+const SIDE_PANEL_W = 372;
+const SIDE_PANEL_H = 650;
 
 const modeOrder = (m: IslandMode) => (m === "hidden" ? 0 : m === "compact" ? 1 : 2);
 
@@ -76,6 +83,23 @@ export class Island {
   readonly desktop: DesktopLink;
 
   private root: HTMLElement;
+  private dockEdge: IslandEdge = "top";
+  private dockAnchor: number | null = null;
+  private dockMoving = false;
+  private dockMoveId = 0;
+  private dockClickToOpen = false;
+  private foldedLyricsOnDock = false;
+  private dockGrip!: HTMLButtonElement;
+  private dockPreview: [IslandEdge, number] | null = null;
+  private dockWasMoved = false;
+  private sidePin!: HTMLButtonElement;
+  private sideLyricsEl!: HTMLElement;
+  private sideLyricTrack!: HTMLElement;
+  private sideLyricEmpty!: HTMLElement;
+  private sideLyricSource: readonly LyricLine[] | null = null;
+  private sideLyricIndex = -2;
+  private resumeLyrics = false;
+  private pinnedLyrics = false;
   private islandEl!: HTMLElement;
   private clipEl!: HTMLElement;
   private contentEl!: HTMLElement;
@@ -188,7 +212,8 @@ export class Island {
       this.onGreetingDone?.();
     };
     // Lyrics showing: the compact island stays (see IslandStateMachine.keepCompact).
-    this.fsm.keepCompact = () => hasPendingReminders() || (State.spotifyPlaying && lyricsEnabled());
+    this.fsm.keepCompact = () => this.dockMoving || this.sideLyricsCompact() || hasPendingReminders()
+      || (State.spotifyPlaying && lyricsEnabled());
     State.subscribe(() => {
       this.dirty = true;
       this.ensureRunning();
@@ -204,6 +229,7 @@ export class Island {
       Sound.play(view);
       return;
     }
+    if (this.restorePinnedLyrics()) return;
     this.fsm.pinned = false;
     this.setView(State.defaultView());
   }
@@ -240,7 +266,7 @@ export class Island {
         // Sessions from the Claude desktop app live there, not in a terminal.
         if (task?.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
         else if (task?.id === "agent_codex") void Bridge.openCodexDesktop(task.sessionId ?? null);
-        else void Bridge.openSession(task?.sessionId ?? null, task?.sessionCwd ?? null);
+        else void Bridge.openSession(task?.sessionId ?? null, task?.sessionCwd ?? null, task?.name ?? null);
       },
       // The ↗ button — same targets as openAgentTarget() on macOS.
       openTarget: () => {
@@ -257,7 +283,7 @@ export class Island {
         if (task.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
         else if (task.id === "agent_codex") void Bridge.openCodexDesktop(task.sessionId ?? null);
         else if (task.id === "integration_claude" || task.sessionId) {
-          void Bridge.openSession(task.sessionId ?? null, task.sessionCwd ?? null);
+          void Bridge.openSession(task.sessionId ?? null, task.sessionCwd ?? null, task.name);
         } else if (task.id === "integration_n8n") void Bridge.openN8n();
         // WhatsApp Desktop at the open conversation; WhatsApp Web when it isn't installed.
         else if (task.id === "integration_whatsapp") void Bridge.whatsappOpenApp();
@@ -359,6 +385,7 @@ export class Island {
     this.lyricEl = h("div", { id: "island-lyric" }, this.lyricSpan);
     this.lyricProbe = h("span", { id: "island-lyric-probe" });
     this.countdown = h("div", { id: "countdown" });
+    this.dockGrip = h("button", { id: "dock-grip", title: tl("Move island"), hidden: true });
     this.compactPlanDot = h("i", { class: "compact-plan-dot" });
     this.compactPlanLabel = h("span", { class: "compact-plan-label" });
     this.compactPlan = h(
@@ -379,11 +406,26 @@ export class Island {
       this.compactPlanLabel,
     );
 
+    this.sidePin = h("button", { id: "side-lyrics-pin", hidden: true, text: tl("Pin lyrics"),
+      onclick: () => this.toggleLyricsPin() });
+    this.sideLyricTrack = h("div", { class: "side-lyrics-track" });
+    this.sideLyricEmpty = h("p", { class: "side-lyrics-empty" });
+    this.sideLyricsEl = h("div", { id: "side-lyrics-only", hidden: true }, this.sideLyricTrack, this.sideLyricEmpty);
+    new ResizeObserver(() => {
+      if (!this.sideLyricsEl.hidden) this.paintSideLyrics();
+    }).observe(this.sideLyricsEl);
     this.header = buildHeader(actions);
+    this.header.el.querySelector(".header-actions")?.prepend(this.sidePin);
+    this.header.el.append(this.dockGrip);
     this.views = buildViews(actions, () => this.animateGeometry(false));
     this.viewsEl = h("div", { id: "views" });
     for (const v of this.views.values()) this.viewsEl.append(v.el);
     this.contentEl = h("div", { id: "content" }, this.header.el, this.viewsEl);
+    const measure = new ResizeObserver(() => this.syncPanelSize());
+    measure.observe(this.header.el);
+    for (const name of ["overview", "upload", "snippets"] as const) {
+      for (const child of this.views.get(name)?.el.children ?? []) measure.observe(child);
+    }
 
     // The drop sequence draws the card, the bar and its own Nubo. It sits under
     // the header, which stays visible on top of it exactly as on macOS.
@@ -408,6 +450,7 @@ export class Island {
       this.compactPlan,
       this.clockEl,
       this.lyricEl,
+      this.sideLyricsEl,
       this.lyricProbe,
       this.closedEl,
       this.reminderDot,
@@ -429,7 +472,7 @@ export class Island {
   private wireFsm() {
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
     this.fsm.openOnHover = State.settings.openOnHover;
-    this.fsm.keepHomeOpen = () => State.view === "tasks" && hasPendingReminders();
+    this.fsm.keepHomeOpen = () => this.dockMoving || State.view === "tasks" && hasPendingReminders();
     this.fsm.alertHomeDelay = () => State.view === "finished" || State.view === "error"
       ? RESPONSE_ALERT_SECONDS : null;
     this.fsm.onTransition = (from, to) => {
@@ -443,6 +486,7 @@ export class Island {
           if (from === "nubo") this.greeting.interrupt();
           else if (from === "hidden" && !this.silentReveal) Sound.play("peek");
           this.setMode("compact");
+          this.restorePinnedLyrics();
           if (from === "nubo") State.view = State.defaultView();
           if (!this.wasInIsland) this.fsm.mouseLeft();
           break;
@@ -535,6 +579,15 @@ export class Island {
   }
 
   setView(view: IslandViewName) {
+    if (["approval", "question", "finished", "error", "tasks"].includes(view)) {
+      this.interruptDockMove();
+      if (this.pinnedLyrics && (view !== "tasks" || hasPendingReminders())) this.resumeLyrics = true;
+    } else if (view === "overview" && this.restorePinnedLyrics()) {
+      return;
+    } else if (view !== "overview") {
+      this.pinnedLyrics = false;
+      this.resumeLyrics = false;
+    }
     this.stopSequenceIfLeaving(view);
     if (view !== "overview") closePlanCard();
     if (State.mode !== "expanded") {
@@ -554,6 +607,7 @@ export class Island {
   }
 
   collapse() {
+    if (this.restorePinnedLyrics()) return;
     // A waiting card is only ever folded, never dropped by a close.
     if (State.pendingApproval) {
       this.foldApproval();
@@ -569,6 +623,11 @@ export class Island {
 
   /** Alert from the hook server: open on this view. Pinned alerts never auto-close. */
   alert(view: IslandViewName) {
+    this.interruptDockMove();
+    if (this.pinnedLyrics && (State.focusTask?.id !== SPOTIFY_ID ||
+        ["approval", "question", "tasks", "finished", "error"].includes(view))) {
+      this.resumeLyrics = true;
+    }
     this.fsm.pinned = State.isPinned;
     this.fsm.forceHome();
     this.expand(view);
@@ -688,7 +747,7 @@ export class Island {
 
   private onDragDrop(e: DragDropPayload) {
     if (e.type !== "over") void Bridge.log(`drag ${e.type} ${e.paths?.length ?? 0} file(s)`);
-    if (State.paused || State.shelfDragging) return;
+    if (State.paused || State.shelfDragging || this.dockMoving || State.pendingApproval) return;
     if (this.dragLeaveTimer != null && e.type !== "leave") {
       window.clearTimeout(this.dragLeaveTimer);
       this.dragLeaveTimer = null;
@@ -708,7 +767,7 @@ export class Island {
         this.engine.animateMorph(1);
         // enterZone must run before the island expands, so the sequence is
         // already active by the time the view becomes `upload`.
-        UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
+        if (!this.lateral) UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
         this.alert("upload");
         break;
       }
@@ -758,6 +817,11 @@ export class Island {
   /** The session pill under the pointer on the drop card (island points), if any. */
   private updateDropTarget(x: number, y: number) {
     const targets = State.view === "upload" && State.fileDragOver && !UploadSeq.dropped ? dropTargets(State.tasks) : [];
+    if (this.lateral && targets.length > 0) {
+      const rect = this.islandRect();
+      State.dropSessionTarget = this.sessionDrop.targetAt(x + rect.x, y + rect.y);
+      return;
+    }
     const i = targets.length > 0 ? dropTargetAt(x, y, targets.length) : null;
     State.dropSessionTarget = i == null ? null : targets[i].id;
   }
@@ -797,9 +861,6 @@ export class Island {
    * slow disk can never stall the animation — same as FileDropHandler on macOS.
    */
   private swallow(paths: string[]) {
-    if (!UploadSeq.isActive || UploadSeq.dropped) {
-      UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
-    }
     const entries = paths.map((path) => ({
       name: path.split(/[\\/]/).pop() || "file",
       path,
@@ -809,6 +870,16 @@ export class Island {
     State.shelfFiles.push(...entries);
     State.droppedFile = entries[0];
 
+    if (this.lateral) {
+      this.engine.animateMorph(0);
+      this.setView("upload");
+      Sound.play("approve");
+      void this.ingestShelfFiles(entries);
+      return;
+    }
+    if (!UploadSeq.isActive || UploadSeq.dropped) {
+      UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
+    }
     UploadSeq.performDrop(State.uploadDuration);
     this.uploadTens = 0;
     this.uploadDone = false;
@@ -914,7 +985,75 @@ export class Island {
     return closedIsland(State.settings.closedIsland) !== "hidden";
   }
 
+  private get lateral(): boolean {
+    return lateralEdge(this.dockEdge);
+  }
+
+  private sideLyricsShowing(): boolean {
+    return this.lateral && State.mode === "expanded" && State.view === "overview"
+      && State.focusTask?.id === SPOTIFY_ID && !planCardOpen() && this.hasLyricsTrack();
+  }
+
+  private hasLyricsTrack(): boolean {
+    return Spotify.state.track != null && !isAd(Spotify.state.track) && lyricsView();
+  }
+
+  get isLyricsPinned(): boolean {
+    return this.pinnedLyrics;
+  }
+
+  private sideLyricsCompact(): boolean {
+    return this.lateral && this.pinnedLyrics && State.mode === "compact" && !State.pendingApproval
+      && State.focusTask?.id === SPOTIFY_ID && this.hasLyricsTrack();
+  }
+
+  private toggleLyricsPin() {
+    if (!this.sideLyricsShowing()) return;
+    this.pinnedLyrics = !this.pinnedLyrics;
+    this.resumeLyrics = false;
+    this.setPinned(false);
+  }
+
+  private compactLyrics(): boolean {
+    return !this.lateral && State.mode === "compact" && State.spotifyPlaying && lyricsEnabled();
+  }
+
+  private restorePinnedLyrics(): boolean {
+    if (!this.resumeLyrics || State.pendingApproval || hasPendingReminders()) return false;
+    this.resumeLyrics = false;
+    if (!this.lateral || !this.pinnedLyrics || !State.tasks.some((task) => task.id === SPOTIFY_ID)) return false;
+    State.setFocus(SPOTIFY_ID);
+    setLyricsBack(false);
+    State.view = "overview";
+    this.setPinned(false);
+    this.fsm.forcePetit();
+    return true;
+  }
+
   private targetSize(): { w: number; h: number; r: number } {
+    if (this.lateral) {
+      if (State.mode === "hidden") {
+        return this.closedShows ? { w: SIDE_COMPACT_W, h: 108, r: 12 } : { w: 0, h: 160, r: 10 };
+      }
+      if (State.mode === "compact") {
+        return this.sideLyricsCompact() ? { w: SIDE_PANEL_W, h: 194, r: EXPANDED_CORNER }
+          : { w: SIDE_COMPACT_W, h: (State.otherTasks.length ? SIDE_COMPACT_H : 96) + (State.settings.showClock ? 18 : 0), r: 15 };
+      }
+      let h = 280;
+      if (this.sideLyricsShowing()) h = 416;
+      else if (State.view === "overview" || State.view === "upload" || State.view === "snippets") {
+        const view = this.views.get(State.view)?.el;
+        const children = Array.from(view?.children ?? []) as HTMLElement[];
+        const bodyHeight = children.reduce((total, child) => total + child.offsetHeight, 0);
+        const gap = State.view === "overview" && children.every((child) => child.offsetHeight > 0) ? 8 : 0;
+        const breathingRoom = State.view === "overview" ? 24 : 10;
+        h = Math.max(116, Math.min(460, this.viewsEl.offsetTop + bodyHeight + gap + breathingRoom));
+      } else if (State.view === "tasks") h = 270;
+      else if (State.view === "prompt") h = 510;
+      else if (State.view === "greeting") h = 150;
+      else if (State.view === "question" || State.view === "recap" || State.view === "whatsNew") h = 420;
+      return { w: SIDE_PANEL_W, h: Math.min(SIDE_PANEL_H, h), r: EXPANDED_CORNER };
+    }
     if (State.mode === "hidden" && this.closedShows) {
       return { w: this.closedW, h: CLOSED_H, r: 10 };
     }
@@ -922,14 +1061,22 @@ export class Island {
     if (State.mode === "expanded" && State.view === "question" && State.pendingApproval?.questions) {
       h = QUESTION_PICKER_H;
     }
+    if (State.mode === "expanded" && (claudePillVisible() || codexPillVisible())) h += 12;
     if (State.mode === "compact") {
       // Nothing in the middle (no clock, no lyric): a slimmer island; the
       // usual width stays where the middle is used.
       if (this.lyricW > 0) w = this.lyricW;
       else if (!State.settings.showClock) w = SLIM_COMPACT_W;
+      if (HOST_OS === "windows" && !this.compactLyrics()) h += HORIZONTAL_GRIP_SPACE;
     }
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
+  }
+
+  private syncPanelSize() {
+    if ((!this.lateral && State.mode !== "expanded") || !this.islandEl || this.dockMoving) return;
+    const { w, h } = this.targetSize();
+    if (this.width.target !== w || this.height.target !== h) this.animateGeometry(false);
   }
 
   private animateGeometry(shrinking: boolean) {
@@ -947,13 +1094,21 @@ export class Island {
   }
 
   private applyGeometry() {
-    const w = this.width.value;
-    const hh = this.height.value;
+    const rect = this.islandRect();
+    const { w, h: hh } = rect;
     const r = this.radius.value;
     this.islandEl.style.width = `${w}px`;
     this.islandEl.style.height = `${hh}px`;
-    this.islandEl.style.borderRadius = `0 0 ${r}px ${r}px`;
-    this.islandEl.style.transform = `translateX(-50%)`;
+    this.islandEl.style.left = `${rect.x}px`;
+    this.islandEl.style.top = `${rect.y}px`;
+    const edge = this.dockWasMoved ? this.dockPreview?.[0] : this.dockEdge;
+    const flat = `${r * (1 - (this.dockWasMoved ? this.dockPreview?.[1] ?? 0 : 1))}px`;
+    const round = `${r}px`;
+    this.islandEl.style.borderRadius = {
+      top: `${flat} ${flat} ${round} ${round}`, bottom: `${round} ${round} ${flat} ${flat}`,
+      left: `${flat} ${round} ${round} ${flat}`, right: `${round} ${flat} ${flat} ${round}`,
+    }[edge ?? "top"];
+    this.islandEl.style.transform = "none";
     // These follow the island as it resizes, so they belong here rather than in
     // the state-driven DOM sync.
     // The mini bots sit in a grid of two columns: with one or two of them the
@@ -965,28 +1120,92 @@ export class Island {
     const gridH = rows * 13 + (rows - 1) * 3;
     this.miniGrid.style.width = `${gridW}px`;
     this.miniGrid.style.height = `${gridH}px`;
-    this.miniGrid.style.left = `${w - 40 - 14.5 + (29 - gridW) / 2}px`;
-    this.miniGrid.style.top = `${hh / 2 - gridH / 2}px`;
-    this.clockEl.style.height = `${hh}px`;
-    this.lyricEl.style.height = `${hh}px`;
+    const sideGrid = this.lateral && State.mode === "compact";
+    this.miniGrid.style.left = `${sideGrid ? (w - gridW) / 2 : w - 40 - 14.5 + (29 - gridW) / 2}px`;
+    const compactBodyHeight = !this.lateral && State.mode === "compact" && HOST_OS === "windows" && !this.compactLyrics()
+      ? Math.max(0, hh - HORIZONTAL_GRIP_SPACE) : hh;
+    const miniCenter = sideGrid ? hh * (State.settings.showClock ? 0.78 : 0.73) : compactBodyHeight / 2;
+    this.miniGrid.style.top = `${miniCenter - gridH / 2}px`;
+    this.clockEl.style.height = `${compactBodyHeight}px`;
+    this.lyricEl.style.height = `${compactBodyHeight}px`;
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
-    const viewportW = window.innerWidth > 0 ? window.innerWidth : PANEL_W;
-    const rect = { x: (viewportW - w) / 2, y: 0, w, h: hh };
     const p = this.pushedRect;
-    if (Math.abs(p.x - rect.x) > 0.5 || Math.abs(p.w - rect.w) > 0.5 || Math.abs(p.h - rect.h) > 0.5) {
+    if (Math.abs(p.x - rect.x) > 0.5 || Math.abs(p.y - rect.y) > 0.5 ||
+        Math.abs(p.w - rect.w) > 0.5 || Math.abs(p.h - rect.h) > 0.5) {
       this.pushedRect = rect;
       void Bridge.setIslandRect(rect.x, rect.y, rect.w, rect.h);
     }
   }
 
-  /** Island rect in window coordinates (origin top-left of the 720×320 window). */
-  private islandRect(): { x: number; y: number; w: number; h: number } {
+  /** Used by the DOM, Rust's click-through, the bot and file drop. */
+  private islandRect() {
     const w = this.width.value;
-    const hh = this.height.value;
-    const viewportW = window.innerWidth > 0 ? window.innerWidth : PANEL_W;
-    return { x: (viewportW - w) / 2, y: 0, w, h: hh };
+    const h = this.height.value;
+    return dockRect(this.dockEdge, this.dockAnchor, window.innerWidth || PANEL_W, window.innerHeight || PANEL_H, w, h);
+  }
+
+  setDockFrame(frame: { edge: IslandEdge; anchor: number }) {
+    const changed = this.dockEdge !== frame.edge;
+    this.dockEdge = frame.edge;
+    this.dockAnchor = frame.anchor;
+    this.root.dataset.edge = frame.edge;
+    this.root.classList.toggle("dock-lateral", this.lateral);
+    if (changed) {
+      if (!this.lateral && (this.pinnedLyrics || this.resumeLyrics)) {
+        this.pinnedLyrics = false;
+        this.resumeLyrics = false;
+        if (!State.pendingApproval) {
+          if (State.mode === "expanded" && State.view === "overview" && State.focusTask?.id === SPOTIFY_ID) {
+            this.foldedLyricsOnDock = this.dockMoving;
+            this.collapse();
+          } else {
+            this.setPinned(false);
+          }
+        }
+      }
+      if (this.lateral && this.uploadActive) {
+        UploadSeq.deactivate();
+        if (State.view === "uploading") this.setView("upload");
+        this.releaseDropPin();
+      }
+      this.updateLyric();
+      this.animateGeometry(false);
+      if (this.collapsed) this.sendCollapsedSize(true);
+      State.notify();
+    }
+    this.ensureRunning();
+  }
+
+  previewDock(preview: [IslandEdge, number] | null) {
+    if (!this.dockMoving) return;
+    this.dockWasMoved = true;
+    this.dockPreview = preview;
+    this.ensureRunning();
+  }
+
+  finishDockMove(clicked = false) {
+    const open = clicked && this.dockClickToOpen && State.mode === "compact";
+    const foldedLyrics = this.foldedLyricsOnDock;
+    ++this.dockMoveId;
+    this.dockClickToOpen = false;
+    this.foldedLyricsOnDock = false;
+    this.dockMoving = false;
+    this.dockWasMoved = false;
+    this.dockPreview = null;
+    this.root.classList.remove("dock-moving");
+    if (open) this.fsm.click();
+    if (!this.wasInIsland) this.fsm.mouseLeft();
+    else if (!foldedLyrics) this.fsm.mouseEntered();
+    this.syncPanelSize();
+    this.ensureRunning();
+  }
+
+  private interruptDockMove() {
+    if (!this.dockMoving) return;
+    this.finishDockMove();
+    void Bridge.cancelIslandMove();
   }
 
   // ── Window collapse (hidden → tiny wake strip, zero polling) ────────────────
@@ -1049,7 +1268,9 @@ export class Island {
 
   /** Tells Rust the folded window's size: the closed island's, or none (the strip). */
   private sendCollapsedSize(force = false) {
-    const size = this.closedShows ? { w: this.closedW, h: CLOSED_H } : { w: 0, h: 0 };
+    const size = this.lateral
+      ? this.closedShows ? { w: SIDE_COMPACT_W, h: 108 } : { w: 6, h: 160 }
+      : this.closedShows ? { w: this.closedW, h: CLOSED_H } : { w: 0, h: 0 };
     if (!force && size.w === this.collapsedTo.w && size.h === this.collapsedTo.h) return;
     this.collapsedTo = size;
     if (size.w > 0) void Bridge.setCollapsed(true, size.w, size.h);
@@ -1095,7 +1316,36 @@ export class Island {
 
   // ── Input ───────────────────────────────────────────────────────────────────
 
+  private beginDockMove(event: MouseEvent, clickToOpen = false) {
+    if (event.button !== 0 || this.dockMoving || State.pendingApproval ||
+        State.fileDragOver || State.shelfDragging || this.desktop.carrying) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.dockMoving = true;
+    this.dockClickToOpen = clickToOpen;
+    this.fsm.cancelTimers();
+    this.root.classList.add("dock-moving");
+    const id = ++this.dockMoveId;
+    void Bridge.beginIslandMove(event.clientX, event.clientY).then((started) => {
+      // A touchpad tap may release before the native poll picks up the press.
+      if (id === this.dockMoveId && !started) this.finishDockMove(clickToOpen);
+    });
+  }
+
   private wireInput() {
+    this.dockGrip.addEventListener("mousedown", (event) => {
+      this.beginDockMove(event);
+    });
+    this.dockGrip.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (event.detail === 0) void Bridge.openSettingsWindow();
+    });
+    this.dockGrip.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void Bridge.centerIsland(!window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    });
+    window.addEventListener("resize", () => this.ensureRunning());
     // Folded, the window is only the closed island (or the wake strip): the
     // pointer coming onto it is all there is to hear, and it wakes the island.
     const wake = () => {
@@ -1151,6 +1401,11 @@ export class Island {
     this.islandEl.addEventListener("mousedown", (e) => {
       Sound.resume();
       State.lastActivity = performance.now();
+      if (HOST_OS === "windows" && e.button === 0 &&
+          (this.compactLyrics() || (this.lateral && State.mode === "compact")) && !State.pendingApproval) {
+        this.beginDockMove(e, true);
+        return;
+      }
       // A click makes a hover-opened island an ordinary open one.
       this.fsm.userInteracted();
       // A press on Nubo may become a drag out to the desktop.
@@ -1206,6 +1461,10 @@ export class Island {
     // a terminal — so it may fold a waiting card away, as Escape in the notch
     // does on macOS.
     window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this.dockMoving) {
+        this.interruptDockMove();
+        return;
+      }
       if (e.key === "Escape" && State.mode === "expanded") {
         if (State.pendingApproval) this.foldApproval();
         else if (!State.isPinned) this.collapse();
@@ -1251,14 +1510,15 @@ export class Island {
       x = -10_000;
       y = -10_000;
     }
+    if (this.dockMoving) return;
     State.mouse = { x, y };
     const rect = this.islandRect();
     State.mouseInIsland = { x: x - rect.x, y: y - rect.y };
 
     // Windows sends no cursor position with an OLE drag, so the drop sequence is
     // fed from the Win32 cursor poll instead — it runs throughout the drag.
-    if (UploadSeq.isActive && !UploadSeq.dropped) {
-      UploadSeq.updateCursor(State.mouseInIsland.x, State.mouseInIsland.y);
+    if (State.fileDragOver && !UploadSeq.dropped) {
+      if (UploadSeq.isActive) UploadSeq.updateCursor(State.mouseInIsland.x, State.mouseInIsland.y);
       this.updateDropTarget(State.mouseInIsland.x, State.mouseInIsland.y);
     }
 
@@ -1304,7 +1564,7 @@ export class Island {
 
   private isBotHit(x: number, y: number): boolean {
     // Out on the desktop, the island's Nubo is invisible: nothing to hit.
-    if (State.nuboOnDesktop) return false;
+    if (State.nuboOnDesktop || (this.lateral && State.mode === "expanded" && !this.lateralAvatar())) return false;
     const rect = this.islandRect();
     const cx = rect.x + this.botCx.value;
     const cy = rect.y + this.botCy.value;
@@ -1407,7 +1667,9 @@ export class Island {
 
     const uploadActive = this.uploadActive;
     // A file over the drop card: the sessions it could go to, on the right.
-    const listing = uploadActive && State.view === "upload" && State.fileDragOver && !UploadSeq.dropped;
+    const listing = (uploadActive || this.lateral) && State.view === "upload" && State.fileDragOver && !UploadSeq.dropped;
+    const dropParent = this.lateral ? this.views.get("upload")?.el : this.uploadCanvas.el;
+    if (dropParent && this.sessionDrop.el.parentElement !== dropParent) dropParent.append(this.sessionDrop.el);
     this.sessionDrop.sync(listing);
     this.uploadCanvas.textRight = listing && dropTargets(State.tasks).length > 0 ? DROP_TEXT_RIGHT_WITH_LIST : this.uploadCanvas.defaultTextRight;
     if (uploadActive) this.uploadCanvas.draw(UploadSeq.frame(), nowMs / 1000);
@@ -1452,6 +1714,18 @@ export class Island {
     if (State.mode === "hidden" && closedIsland(State.settings.closedIsland) === "nubo") {
       p = { cx: this.width.value / 2, cy: this.height.value / 2, diameter: CLOSED_BOT_D, opacity: 1 };
     }
+    if (this.lateral && State.mode === "compact") {
+      const hasMinis = State.otherTasks.length > 0;
+      const clock = State.settings.showClock;
+      this.islandEl.style.setProperty("--side-clock-y", hasMinis ? "49%" : "73%");
+      const center = hasMinis ? clock ? 0.23 : 0.27 : clock ? 0.3 : 0.5;
+      p = { cx: this.width.value / 2, cy: this.height.value * center + 4, diameter: 22, opacity: 1 };
+    }
+    const avatar = this.lateralAvatar();
+    if (avatar) {
+      const x = avatar.offsetLeft + (document.documentElement.dataset.dir === "rtl" ? avatar.offsetWidth - 35 : 35);
+      p = { cx: this.viewsEl.offsetLeft + x, cy: this.viewsEl.offsetTop + avatar.offsetTop + avatar.offsetHeight / 2, diameter: 40, opacity: 1 };
+    }
     this.botCx.target = p.cx;
     this.botCy.target = p.cy;
     this.botSize.target = p.diameter / 0.6;
@@ -1459,7 +1733,7 @@ export class Island {
     const greetingActive = State.mode === "expanded" && State.view === "greeting";
     // The drop canvas draws its own Nubo; two of them would overlap. Out on the
     // desktop, he isn't here at all.
-    const away = State.nuboOnDesktop;
+    const away = State.nuboOnDesktop || this.sideLyricsCompact() || this.lateral && State.mode === "expanded" && !avatar;
     const visible = p.opacity > 0 && !greetingActive && !this.uploadActive && !away;
     this.botCanvas.style.opacity = visible ? "1" : "0";
 
@@ -1476,6 +1750,16 @@ export class Island {
     } else {
       this.botGlow.style.display = "none";
     }
+  }
+
+  private lateralAvatar() {
+    if (!this.lateral || State.mode !== "expanded") return null;
+    if (State.view === "approval" || State.view === "question") {
+      return this.views.get(State.view)?.el.firstElementChild as HTMLElement | null;
+    }
+    if (State.view !== "overview") return null;
+    const overview = this.views.get("overview")?.el;
+    return overview?.dataset.avatar === "true" ? overview.firstElementChild as HTMLElement : null;
   }
 
   private drawBot(dt: number) {
@@ -1509,7 +1793,7 @@ export class Island {
       ? hexToRGB(openPlanColor())
       : this.engine.showsUpdateHint
         ? UPDATE_BLUE_RGB
-        : focus?.isIntegration
+        : focus
           ? hexToRGB(focus.color)
           : null;
     this.engine.particleOverhang = BOT_OVERHANG;
@@ -1627,8 +1911,10 @@ export class Island {
 
     const pendingReminder = hasPendingReminders();
     const showingPendingTasks = expanded && State.view === "tasks" && pendingReminder;
-    if (this.showingPendingTasks && !showingPendingTasks && expanded && State.view === "tasks" && !this.wasInIsland) {
-      this.fsm.mouseLeft();
+    if (this.showingPendingTasks && !showingPendingTasks && expanded && State.view === "tasks") {
+      if (!this.restorePinnedLyrics() && !this.wasInIsland) {
+        this.fsm.mouseLeft();
+      }
     }
     this.showingPendingTasks = showingPendingTasks;
     this.reminderDot.hidden = State.mode !== "compact" || !pendingReminder;
@@ -1659,10 +1945,22 @@ export class Island {
       }
     }
 
+    this.root.dataset.mode = State.mode;
+    this.root.dataset.view = State.view;
     this.updateLyric();
+    const gripParent = State.mode === "expanded" ? this.header.el : this.islandEl;
+    if (this.dockGrip.parentElement !== gripParent) gripParent.append(this.dockGrip);
+    this.dockGrip.hidden = HOST_OS !== "windows" || State.mode === "hidden" ||
+      this.lyricShown || (this.lateral && !expanded) || State.view === "greeting" || this.uploadActive || State.pendingApproval != null;
+    const sideLyrics = this.sideLyricsShowing();
+    if (this.pinnedLyrics && !this.resumeLyrics && expanded && !sideLyrics &&
+        State.view === "overview" && !State.pendingApproval) this.pinnedLyrics = false;
+    this.sidePin.hidden = !sideLyrics;
+    this.sidePin.classList.toggle("on", this.pinnedLyrics);
+    this.sidePin.setAttribute("aria-pressed", String(this.pinnedLyrics));
 
     // Compact mini grid
-    const showGrid = State.mode === "compact" && !this.lyricShown;
+    const showGrid = State.mode === "compact" && !this.sideLyricsCompact();
     this.miniGrid.style.opacity = showGrid ? "1" : "0";
     if (showGrid) {
       const others = State.otherTasks.slice(0, 4);
@@ -1679,21 +1977,21 @@ export class Island {
     }
 
     // Compact Claude plan indicator
-    const showPlan = claudeCompactPillVisible();
+    const showPlan = !this.lateral && !this.lyricShown && claudeCompactPillVisible();
     this.compactPlan.style.opacity = showPlan ? "1" : "0";
     this.compactPlan.style.pointerEvents = showPlan ? "auto" : "none";
     if (showPlan) {
       const others = State.otherTasks.slice(0, 4);
-      this.compactPlan.style.right = this.lyricShown ? "14px" : others.length > 0 ? "58px" : "20px";
+      this.compactPlan.style.right = others.length > 0 ? "58px" : "20px";
       // With nothing in the middle (no clock, no lyric) the gauge takes it.
       this.compactPlan.classList.toggle("mid", !this.lyricShown && !State.settings.showClock);
       const pct = dominantPct(State.planUsage);
-      const color = planColor(pct);
-      this.compactPlan.style.setProperty("--plan", color);
+      this.compactPlan.style.setProperty("--plan", CLAUDE_PLAN_COLOR);
       this.compactPlanLabel.textContent = pct != null ? `${Math.round(pct)}%` : "—";
     }
 
     this.updateClock();
+    this.syncPanelSize();
 
     syncMiniBotStates(State.tasks);
     this.engine.setState(State.effectiveState);
@@ -1703,13 +2001,13 @@ export class Island {
   private updateClock() {
     this.updateClosed();
     this.updateLyric();
-    const on = State.mode === "compact" && State.settings.showClock && !this.lyricShown;
+    const on = State.mode === "compact" && State.settings.showClock && !this.lyricShown && !this.sideLyricsCompact();
     this.clockEl.style.opacity = on ? "1" : "0";
     if (!on) return;
     const now = new Date();
     const date = now.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
     const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    const text = `${date}  ${time}`;
+    const text = this.lateral ? time : `${date}  ${time}`;
     if (this.clockEl.textContent !== text) this.clockEl.textContent = text;
   }
 
@@ -1719,20 +2017,11 @@ export class Island {
   private lyricW = 0;
   private lyricSwap?: number;
 
-  /**
-   * Room kept at the lyric line's right: with lyrics showing the mini bots are
-   * hidden, but the Claude plan gauge (when it is on) stays at the right.
-   */
-  private lyricRightInset(): number {
-    if (!claudeCompactPillVisible()) return 20;
-    return 14 + (this.compactPlan.offsetWidth || 76) + 10;
-  }
-
   /** A width for `text`, in steps of 40 px so the island does not twitch at every word. */
   private lyricWidthFor(text: string): number {
     if (text === "" || text === "♪") return 0;
     this.lyricProbe.textContent = text;
-    const need = this.lyricProbe.getBoundingClientRect().width + 50 + this.lyricRightInset() + 28;
+    const need = this.lyricProbe.getBoundingClientRect().width + 2 * this.lyricEl.offsetLeft + 28;
     return clamp(Math.ceil(need / 40) * 40, COMPACT_W + 72, 600);
   }
 
@@ -1799,14 +2088,51 @@ export class Island {
     this.eqLevel = 0;
   }
 
+  private paintSideLyrics() {
+    const lines = currentLyrics();
+    const track = this.sideLyricTrack;
+    const previous = this.sideLyricIndex;
+    const changed = lines !== this.sideLyricSource;
+    if (changed) {
+      this.sideLyricSource = lines;
+      track.replaceChildren(...(lines ?? []).map((line) => h("div", {}, h("span", { text: line.text || "♪" }))));
+    }
+    this.sideLyricEmpty.hidden = !!lines;
+    if (!lines) {
+      this.sideLyricEmpty.textContent = lyricsLoading() ? t("Loading lyrics…") : t("Lyrics not available");
+      this.sideLyricIndex = -2;
+      return;
+    }
+    const index = currentLyricWindow()?.index ?? -1;
+    this.sideLyricIndex = index;
+    if (changed || index !== previous) {
+      for (const [i, row] of Array.from(track.children).entries()) {
+        row.classList.toggle("current", i === index);
+        row.classList.toggle("near", Math.abs(i - index) === 1);
+      }
+    }
+    const row = track.children[Math.max(0, index)] as HTMLElement | undefined;
+    if (!row) return;
+    const y = this.sideLyricsEl.clientHeight / 2 - row.offsetTop - row.offsetHeight / 2;
+    const transform = `translateY(${y}px)`;
+    if (track.style.transform !== transform) {
+      const advance = !changed && previous >= 0 && index === previous + 1;
+      track.style.transition = advance ? "" : "none";
+      track.style.transform = transform;
+    }
+  }
+
   /**
    * Spotify lyrics (the bubble button of the Spotify card). While a song plays, the compact
    * island shows the line being sung — a second early — where the clock goes,
-   * grows to fit it and hides the other pills' icons, which would cover it; a ♪
+   * grows to fit it, leaving room for the other pills; a ♪
    * stands in while there is no line. Lines cross-fade rather than jump.
    */
   private updateLyric() {
-    const mode = State.mode === "compact" && State.spotifyPlaying && lyricsEnabled();
+    const mode = this.compactLyrics();
+    const side = this.sideLyricsCompact();
+    this.sideLyricsEl.hidden = !side;
+    if (side) this.paintSideLyrics();
     const current = mode ? (currentLyricWindow()?.current ?? "") : "";
     const label = mode ? (current !== "" ? current : "♪") : "";
     this.lyricShown = mode;
@@ -1827,16 +2153,15 @@ export class Island {
         }, 160);
       }
     }
-    this.lyricEl.style.right = mode ? `${this.lyricRightInset()}px` : "";
     const w = mode ? this.lyricWidthFor(label) : 0;
     if (w !== this.lyricW) {
       const grew = w > this.lyricW;
       this.lyricW = w;
       if (State.mode === "compact") this.animateGeometry(!grew);
     }
-    if (mode && this.lyricTimer == null) {
+    if ((mode || side) && this.lyricTimer == null) {
       this.lyricTimer = window.setInterval(() => this.updateLyric(), 250);
-    } else if (!mode && this.lyricTimer != null) {
+    } else if (!mode && !side && this.lyricTimer != null) {
       window.clearInterval(this.lyricTimer);
       this.lyricTimer = undefined;
     }

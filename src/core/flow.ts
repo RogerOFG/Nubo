@@ -48,7 +48,7 @@ export interface FlowPrefs {
   keepDays: number;
   cleanup: boolean;
   defaultStyle: Style;
-  summaryEngine: "claude" | "off";
+  summaryEngine: "claude-auto" | "off";
   openAtLaunch: boolean;
   /** « OK Nubo »: listen for it and answer with Claude. */
   voice: boolean;

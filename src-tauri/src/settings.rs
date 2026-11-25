@@ -26,6 +26,7 @@ pub struct Settings {
     pub main_pill: String,
     /// "primary" = the main display, "cursor" = whichever display the mouse is on.
     pub screen: String,
+    pub island_dock: crate::dock::Dock,
     pub autostart: bool,
     pub hooks_installed: bool,
     /// Claude model used by the chat. Changeable in the settings window.
@@ -164,6 +165,7 @@ impl Default for Settings {
             ],
             main_pill: "integration_claude".into(),
             screen: "primary".into(),
+            island_dock: crate::dock::Dock::default(),
             autostart: false,
             hooks_installed: false,
             model: default_model(),
@@ -468,6 +470,7 @@ mod tests {
   "activeIntegrations": ["integration_notion"],
   "mainPill": "agent_cursor",
   "screen": "cursor",
+  "islandDock": { "edge": "right", "offset": 0.25 },
   "autostart": true,
   "hooksInstalled": true,
   "model": "some-model",
@@ -992,6 +995,7 @@ mod tests {
                 "activeIntegrations",
                 "mainPill",
                 "screen",
+                "islandDock",
                 "autostart",
                 "hooksInstalled",
                 "model",

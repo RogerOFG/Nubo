@@ -6,13 +6,14 @@ import { Bridge } from "../core/bridge";
 import { NO_UPDATE, isBusy, type UpdateStatus } from "../core/update";
 import { h } from "../views/dom";
 import { t } from "../i18n/i18n";
+import { settingsCard, settingsField } from "./parts";
 
 type Toggle = (on: boolean, onChange: (v: boolean) => void) => HTMLElement;
 
 /** The rows on screen, told about "update-status" (listened to once in main.ts). */
 export let updatesListener: ((status: UpdateStatus) => void) | null = null;
 
-export function updateRows(toggle: Toggle, version: string): HTMLElement[] {
+export function updatesSection(toggle: Toggle, version: string): HTMLElement {
   let status: UpdateStatus = { ...NO_UPDATE, current: version };
   const sw = toggle(false, (on) => void Bridge.updateSetConsent(on));
   const install = h("button", {
@@ -29,7 +30,7 @@ export function updateRows(toggle: Toggle, version: string): HTMLElement[] {
     },
   }) as HTMLButtonElement;
   const feedback = h("span", { class: "hint" });
-  const footer = h("span", { class: "hint", style: "flex:1 1 0;min-width:0" });
+  const footer = h("p", { class: "hint" });
   const current = h("span", { class: "hint" });
 
   function draw() {
@@ -62,14 +63,10 @@ export function updateRows(toggle: Toggle, version: string): HTMLElement[] {
   });
   draw();
 
-  return [
-    h("div", { class: "row" },
-      h("label", { text: t("Updates") }),
-      sw,
-      h("span", { class: "hint", text: t("Tell me when a new version is out") }),
-    ),
-    h("div", { class: "row" }, h("label", {}), install, check, feedback),
-    h("div", { class: "row" }, h("label", {}), footer),
-    h("div", { class: "row" }, h("label", {}), current),
-  ];
+  return settingsCard(t("Updates"),
+    settingsField(t("Tell me when a new version is out"), sw),
+    footer,
+    h("div", { class: "general-actions" }, check, install, feedback),
+    current,
+  );
 }

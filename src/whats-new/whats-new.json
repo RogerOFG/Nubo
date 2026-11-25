@@ -147,6 +147,46 @@
       ]
     },
     {
+      "version": "0.5.13",
+      "items": [
+        {
+          "icon": "sparkles",
+          "title": {
+            "en": "Island on any edge",
+            "zh-Hans": "浮岛可停靠任意边缘",
+            "hi": "हर किनारे पर आइलैंड",
+            "es": "Isla en cualquier borde",
+            "ar": "الجزيرة على أي حافة",
+            "fr": "L’île sur n’importe quel bord",
+            "bn": "যেকোনো প্রান্তে আইল্যান্ড",
+            "pt-BR": "Ilha em qualquer borda",
+            "ru": "Остров у любого края",
+            "id": "Pulau di tepi mana pun",
+            "de": "Insel an jedem Bildschirmrand",
+            "tr": "Her kenarda ada",
+            "ko": "어느 가장자리에서나 아일랜드",
+            "ja": "どの画面端にもアイランド"
+          },
+          "detail": {
+            "en": "Drag the island to any edge and pin Spotify lyrics on either side.",
+            "zh-Hans": "将浮岛拖到任意边缘，并可在左右两侧固定 Spotify 歌词。",
+            "hi": "आइलैंड को किसी भी किनारे तक खींचें और बाईं या दाईं ओर Spotify के बोल पिन करें।",
+            "es": "Arrastra la isla a cualquier borde y fija las letras de Spotify en los laterales.",
+            "ar": "اسحب الجزيرة إلى أي حافة وثبّت كلمات Spotify على أحد الجانبين.",
+            "fr": "Fais glisser l’île vers le bord de ton choix et épingle les paroles Spotify sur un côté.",
+            "bn": "আইল্যান্ডকে যেকোনো প্রান্তে টেনে নিন এবং দুই পাশের যেকোনোটিতে Spotify-এর গানের কথা পিন করুন।",
+            "pt-BR": "Arraste a ilha para qualquer borda e fixe as letras do Spotify em uma das laterais.",
+            "ru": "Перетащите остров к любому краю и закрепите текст Spotify слева или справа.",
+            "id": "Seret pulau ke tepi mana pun dan sematkan lirik Spotify di sisi kiri atau kanan.",
+            "de": "Ziehe die Insel an einen beliebigen Rand und hefte Spotify-Songtexte links oder rechts an.",
+            "tr": "Adayı herhangi bir kenara sürükle ve Spotify şarkı sözlerini sağa veya sola sabitle.",
+            "ko": "아일랜드를 원하는 가장자리로 옮기고 좌우 측면에 Spotify 가사를 고정하세요.",
+            "ja": "アイランドを好きな画面端にドラッグし、左右どちらかに Spotify の歌詞を固定できます。"
+          }
+        }
+      ]
+    },
+    {
       "version": "0.5.12",
       "items": [
         {

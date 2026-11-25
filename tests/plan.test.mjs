@@ -239,7 +239,9 @@ test("an open card follows its pill, and Nubo wears that plan's colour", () => {
   State.settings.planRelayInstalled = true;
   State.showingPlanDetail = true;
   assert.equal(planCardOpen(), true);
-  assert.equal(openPlanColor(), "#6B7079");
+  assert.equal(openPlanColor(), "#F59E0B");
+  State.planUsage = { sevenDay: win(1, Date.now() / 1000 + 3600), updatedAt: Date.now() };
+  assert.equal(openPlanColor(), "#F59E0B");
   // The Codex card cannot be open without its pill.
   State.planDetailIsCodex = true;
   assert.equal(planCardOpen(), false);

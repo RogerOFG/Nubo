@@ -1735,7 +1735,7 @@ mod win {
 
     // ── Volume: Spotify in the Windows mixer ──────────────────────────────────
 
-    /// Spotify's audio sessions on the default output.
+    /// Spotify's audio sessions on the active outputs.
     fn spotify_audio() -> Vec<ISimpleAudioVolume> {
         spotify_controls().into_iter().filter_map(|c| c.cast::<ISimpleAudioVolume>().ok()).collect()
     }
@@ -1800,14 +1800,45 @@ mod win {
         Some((level * 100.0).round().clamp(0.0, 100.0) as i32)
     }
 
-    fn set_spotify_volume(percent: f64) -> bool {
+    fn set_spotify_volume(percent: f64) -> Option<i32> {
+        if !percent.is_finite() { return None; }
         let level = (percent / 100.0).clamp(0.0, 1.0) as f32;
-        let sessions = spotify_audio();
-        let mut done = false;
-        for volume in &sessions {
-            done |= unsafe { volume.SetMasterVolume(level, std::ptr::null()).is_ok() };
+        let mut confirmed = None;
+        for volume in spotify_audio() {
+            let actual = unsafe {
+                volume.SetMasterVolume(level, std::ptr::null()).and_then(|_| volume.GetMasterVolume())
+            };
+            if let Ok(actual) = actual {
+                if (actual - level).abs() <= 0.01 {
+                    confirmed = Some((actual * 100.0).round() as i32);
+                }
+            }
         }
-        done
+        confirmed
+    }
+
+    #[test]
+    #[ignore = "requires Spotify's audio session on an active Windows output"]
+    fn spotify_volume_changes_in_the_windows_mixer() {
+        struct Restore(Vec<(ISimpleAudioVolume, f32)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                for (session, value) in &self.0 {
+                    let _ = unsafe { session.SetMasterVolume(*value, std::ptr::null()) };
+                }
+            }
+        }
+        let restore = Restore(spotify_audio().into_iter().filter_map(|session| {
+            let volume = unsafe { session.GetMasterVolume().ok()? };
+            Some((session, volume))
+        }).collect());
+        let before = restore.0.first().expect("Spotify has no audio session on an active output").1;
+        let original = (before * 100.0).round() as i32;
+        let target = if original > 2 { original - 2 } else { original + 2 };
+        assert_eq!(set_spotify_volume(f64::from(target)), Some(target));
+        assert!(restore.0.iter().any(|(session, _)| {
+            unsafe { session.GetMasterVolume() }.is_ok_and(|v| (v * 100.0).round() as i32 == target)
+        }));
     }
 
     // ── Commands ──────────────────────────────────────────────────────────────
@@ -1829,6 +1860,18 @@ mod win {
     }
 
     pub fn control(app: &AppHandle, action: &str, value: Option<f64>) -> bool {
+        // Mixer volume is independent of the media session used for playback.
+        if action == "volume" {
+            if !SHARED.lock().unwrap().active { return false; }
+            let Some(actual) = value.and_then(set_spotify_volume) else { return false; };
+            let state = {
+                let mut s = SHARED.lock().unwrap();
+                s.state.volume = actual;
+                s.state.clone()
+            };
+            emit_state(app, &state);
+            return true;
+        }
         let state = {
             let s = SHARED.lock().unwrap();
             if !(s.active && s.state.running) {
@@ -1864,14 +1907,13 @@ mod win {
             } else {
                 MediaPlaybackAutoRepeatMode::None
             })),
-            "volume" => set_spotify_volume(v),
             _ => false,
         };
         if !done {
             return false;
         }
         // Show these at once, as the Mac does; the session's events confirm them.
-        let optimistic = matches!(action, "seek" | "shuffle" | "repeat" | "volume");
+        let optimistic = matches!(action, "seek" | "shuffle" | "repeat");
         if optimistic {
             let state = {
                 let mut s = SHARED.lock().unwrap();
@@ -1883,7 +1925,7 @@ mod win {
                     }
                     "shuffle" => s.state.shuffle = v != 0.0,
                     "repeat" => s.state.repeat = v != 0.0,
-                    _ => s.state.volume = v.round().clamp(0.0, 100.0) as i32,
+                    _ => {}
                 }
                 s.state.clone()
             };

@@ -95,7 +95,7 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
       const task = State.focusTask;
       if (task?.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
       else if (task?.id === "agent_codex") void Bridge.openCodexDesktop(task.sessionId ?? null);
-      else void Bridge.openSession(task?.sessionId ?? null, task?.sessionCwd ?? null);
+      else void Bridge.openSession(task?.sessionId ?? null, task?.sessionCwd ?? null, task?.name ?? null);
       if (State.mode === "expanded") host.collapse();
       break;
     }

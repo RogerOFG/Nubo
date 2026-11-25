@@ -1,0 +1,50 @@
+name: Windows checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '21 9 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx --no-install tsc --noEmit
+      - run: node --import ./tests/setup.mjs --test --test-force-exit "tests/**/*.test.mjs"
+      - run: |
+          $lib = node scripts/verify-native.mjs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "SHERPA_ONNX_LIB_DIR=$lib" >> $env:GITHUB_ENV
+      - run: cargo test --workspace --locked
+
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Audit JavaScript dependencies
+        run: npm audit --audit-level=moderate
+      - run: cargo install cargo-audit --locked --version 0.23.0
+      # The workspace lockfile also includes Linux-only and build-only packages.
+      # Keep their advisories visible while the transitive dependencies are addressed.
+      - name: Audit Rust dependencies
+        if: always()
+        continue-on-error: true
+        run: cargo audit

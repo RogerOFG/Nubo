@@ -253,7 +253,7 @@ export function danceTransform(seconds: number, level: number, R: number) {
 
 export class BotEngine {
   isMini = false;
-  /** Solid body colour for mini bots / integration pills (null = Nubo gradient). */
+  /** Base colour for each character's gradient (null = Nubo's lavender). */
   bodyColor: RGB | null = null;
   /**
    * A new Nubo waits (whats-new/whats-new.ts): while Nubo is idle or asleep
@@ -948,26 +948,21 @@ export class BotEngine {
 
   private drawBody(x: CanvasRenderingContext2D, body: Path2D, R: number, rx: number, ry: number) {
     const pumpkin = this.pumpkinAlpha;
-    if (this.bodyColor) {
-      // Mini bots: flat solid fill — no gradient, no reflection, no highlight
-      x.fillStyle = rgba(this.bodyColor, 1);
-      x.fill(body);
-      if (pumpkin <= 0.001) return;
-    } else {
-      // The glow: the cloud, painted once in its own halo.
-      x.save();
-      x.shadowColor = GLOW;
-      x.shadowBlur = R * 0.5 * (1 - this.morph);
-      x.fillStyle = rgba(BASE_BOTTOM);
-      x.fill(body);
-      x.restore();
-      const g = x.createLinearGradient(rx * 0.1, -ry * 0.95, -rx * 0.05, ry * 0.95);
-      g.addColorStop(0, rgba(BASE_TOP));
-      g.addColorStop(0.45, rgba(BASE_TOP, 0.96));
-      g.addColorStop(1, rgba(BASE_BOTTOM));
-      x.fillStyle = g;
-      x.fill(body);
-    }
+    const base = this.bodyColor;
+    const top = base ? mix3(base, [1, 1, 1], 0.75) : BASE_TOP;
+    const bottom = base ? mix3(base, [0.12, 0.10, 0.24], 0.25) : BASE_BOTTOM;
+    x.save();
+    x.shadowColor = base ? rgba(base, this.isMini ? 0.36 : 0.66) : GLOW;
+    x.shadowBlur = R * 0.5 * (1 - this.morph);
+    x.fillStyle = rgba(bottom);
+    x.fill(body);
+    x.restore();
+    const g = x.createLinearGradient(rx * 0.1, -ry * 0.95, -rx * 0.05, ry * 0.95);
+    g.addColorStop(0, rgba(top));
+    g.addColorStop(0.45, rgba(base ? mix3(base, top, 0.57) : top, 0.96));
+    g.addColorStop(1, rgba(bottom));
+    x.fillStyle = g;
+    x.fill(body);
     x.save();
     if (pumpkin > 0.001) {
       const pg = x.createLinearGradient(rx * 0.7, -ry * 0.85, -rx * 0.8, ry * 0.9);
@@ -976,11 +971,11 @@ export class BotEngine {
       x.globalAlpha = pumpkin;
       x.fillStyle = pg;
       x.fill(body);
-      // A flat-coloured body only gets the shading while it is a pumpkin.
-      x.globalAlpha = this.bodyColor ? pumpkin : 1;
+      x.globalAlpha = 1;
     }
 
-    const effectiveTint = this.tint * (1 - this.morph);
+    // The alert tint is an accent on a character's own palette.
+    const effectiveTint = this.tint * (1 - this.morph) * (base ? 0.28 : 1);
     if (effectiveTint > 0.01) {
       const tg = x.createLinearGradient(0, ry, 0, -ry);
       tg.addColorStop(0, rgba(this.col, 0.72 * effectiveTint));
@@ -992,7 +987,7 @@ export class BotEngine {
     const sh = x.createRadialGradient(0, 0, R * 0.15, 0, 0, R * 1.25);
     sh.addColorStop(0, "rgba(0,0,0,0)");
     sh.addColorStop(0.6, "rgba(0,0,0,0)");
-    sh.addColorStop(1, "rgba(60,40,160,0.16)");
+    sh.addColorStop(1, base ? rgba(bottom, 0.2) : "rgba(60,40,160,0.16)");
     x.fillStyle = sh;
     x.fill(body);
 

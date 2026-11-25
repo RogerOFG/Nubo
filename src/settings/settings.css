@@ -431,3 +431,145 @@ html[dir="rtl"] :is(.diff, .path, .keycap, input[type="password"], input[type="t
 /* Settings → Android phone: the pairing QR code (an SVG from Rust, black on white). */
 .qr { width: 220px; max-width: 100%; background: #fff; border-radius: 8px; padding: 4px; }
 .qr svg { display: block; width: 100%; height: auto; }
+
+/* General: setting labels and explanations stay with their controls. */
+#settings-root:has(> .general-grid) {
+  container: general-page / inline-size;
+}
+
+.general-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@container general-page (min-width: 720px) {
+  .general-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.general-card {
+  min-width: 0;
+  gap: 0;
+  padding: 0 16px;
+  container: general-card / inline-size;
+}
+
+.general-card > h2 {
+  font-size: 14px;
+  padding: 14px 0 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.general-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 0;
+}
+
+.general-field + .general-field,
+.general-details {
+  border-top: 1px solid var(--hairline);
+}
+
+.general-field-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.general-field-name,
+.general-details > summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.general-card .hint {
+  color: #a7adb7;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.general-control,
+.general-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.general-control {
+  justify-content: flex-end;
+}
+
+.general-control select {
+  inline-size: clamp(112px, 40cqi, 196px);
+  max-inline-size: 100%;
+  min-block-size: 30px;
+}
+
+.general-control input[type="range"] {
+  inline-size: clamp(52px, 24cqi, 118px);
+}
+
+.general-control .general-seconds {
+  inline-size: 62px;
+  min-block-size: 30px;
+}
+
+.general-value {
+  color: #b9c0cb;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.general-control output {
+  min-inline-size: 4ch;
+  text-align: end;
+}
+
+.general-card :is(button, input, select, summary):focus-visible {
+  outline: 2px solid #a7b6fa;
+  outline-offset: 3px;
+}
+
+.general-details {
+  padding: 11px 0;
+}
+
+.general-details summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.general-details > .hint,
+.general-details > .general-actions {
+  margin-top: 9px;
+}
+
+.general-card > .hint,
+.general-card > .general-actions {
+  padding-bottom: 12px;
+}
+
+.general-actions {
+  flex-wrap: wrap;
+}
+
+@container general-card (max-width: 275px) {
+  .general-field:has(select) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .general-field:has(select) .general-control {
+    justify-content: flex-start;
+  }
+
+  .general-control select {
+    inline-size: 100%;
+  }
+}

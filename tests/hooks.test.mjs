@@ -12,6 +12,7 @@ import { Sound } from "../src/core/sound.ts";
 import { setLanguage } from "../src/i18n/i18n.ts";
 
 const CLAUDE = "integration_claude";
+const SPOTIFY = "integration_spotify";
 
 /** What the handler asked the island to do, in order. */
 let asked;
@@ -74,6 +75,24 @@ test("a paused island ignores every other event", () => {
 });
 
 // ── Session and work events ───────────────────────────────────────────────────
+
+test("a new prompt brings its agent forward from Spotify", () => {
+  State.settings.activeIntegrations = [SPOTIFY];
+  State.loadIntegrationTasks();
+  State.setFocus(SPOTIFY);
+  hook({ hook_event_name: "UserPromptSubmit", session_id: "claude-1", cwd: "C:\\work", prompt: "Hola" });
+  assert.equal(State.focusTask?.id, CLAUDE);
+});
+
+test("a pending request owns the visible character and returns to Spotify afterward", () => {
+  State.settings.activeIntegrations = [SPOTIFY];
+  State.loadIntegrationTasks();
+  State.setFocus(SPOTIFY);
+  hook({ hook_event_name: "PermissionRequest", request_id: "music-r1", tool_name: "Bash" });
+  assert.equal(State.focusTask?.id, CLAUDE);
+  State.endApproval();
+  assert.equal(State.focusTask?.id, SPOTIFY);
+});
 
 test("a session names the pill after its folder and reveals the island", () => {
   hook({ hook_event_name: "SessionStart", cwd: "C:\\Users\\me\\proj\\" });
@@ -497,6 +516,14 @@ test("the main tool's agent sessions put it back as it was, never take it away",
 
 const codexHook = (hook_event_name, session_id = "s1", turn_id = "t1", extra = {}) =>
   hook({ nubo_agent: "codex", hook_event_name, session_id, turn_id, ...extra });
+
+test("a Claude Code response carries its terminal target even when Nubo missed the start", () => {
+  hook({ hook_event_name: "Stop", session_id: "warp-session", cwd: "C:/projects/Praxia",
+    last_assistant_message: "Done." });
+  assert.equal(task().sessionId, "warp-session");
+  assert.equal(task().sessionCwd, "C:/projects/Praxia");
+  assert.equal(task().name, "Praxia");
+});
 
 test("Codex continuing after Stop keeps working and never raises a completed card", () => {
   codexHook("UserPromptSubmit");

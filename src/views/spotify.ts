@@ -300,7 +300,42 @@ export function buildSpotifyCard(): SpotifyCardHost {
     // As wide as the lyrics button, so the controls stay centred.
     h("span", { class: "np-lyrics-spacer" }),
   );
-  const playingEl = h("div", { class: "np-card" }, head, progressRow, controls);
+  const volume = h("input", { type: "range", min: "0", max: "100", step: "1" });
+  const volumeReadout = h("output");
+  const volumeRow = h("label", { class: "np-volume" }, svg(ICONS.speakerLine, 14), volume, volumeReadout);
+  let previewVolume: number | null = null;
+  let requestedVolume: number | null = null;
+  let settingVolume = false;
+
+  function paintVolume() {
+    const value = previewVolume ?? Spotify.state.volume;
+    volume.value = String(value);
+    volumeReadout.value = `${value}%`;
+    volume.setAttribute("aria-label", `Spotify · ${t("Volume")}`);
+  }
+
+  volume.addEventListener("input", () => {
+    previewVolume = volume.valueAsNumber;
+    volume.removeAttribute("aria-invalid");
+    paintVolume();
+  });
+  volume.addEventListener("change", async () => {
+    requestedVolume = volume.valueAsNumber;
+    if (settingVolume) return;
+    settingVolume = true;
+    while (requestedVolume != null) {
+      const value = requestedVolume;
+      requestedVolume = null;
+      const accepted = await Bridge.spotifyControl("volume", value);
+      if (requestedVolume == null) {
+        if (previewVolume === value) previewVolume = null;
+        volume.setAttribute("aria-invalid", String(!accepted));
+        paintVolume();
+      }
+    }
+    settingVolume = false;
+  });
+  const playingEl = h("div", { class: "np-card" }, head, progressRow, controls, volumeRow);
 
   // Idle: the same layout as the other idle cards.
   const idleDot = dot("#22C55E", 5);
@@ -429,6 +464,7 @@ export function buildSpotifyCard(): SpotifyCardHost {
 
   function syncPlaying(track: SpotifyTrack) {
     const s = Spotify.state;
+    paintVolume();
     if (shownTrack !== track) {
       shownTrack = track;
       title.textContent = isAd(track) ? t("Advertisement") : track.title;

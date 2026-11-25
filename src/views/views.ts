@@ -1,3 +1,4 @@
+import { lateralEdge } from "../core/dock";
 // Island views — DOM ports of IslandViewContent.swift. Paddings, font sizes,
 // colours and wording are copied from the Swift views so both platforms read
 // identically.
@@ -189,6 +190,11 @@ export function buildHeader(actions: ViewActions): ViewHost {
     claudePill.el.style.display = claudeOn ? "" : "none";
     codexPill.el.style.display = codexOn ? "" : "none";
     planPills.classList.toggle("on", claudeOn || codexOn);
+    if (lateralEdge(State.settings.islandDock.edge)) {
+      if (planPills.parentElement !== el) el.append(planPills);
+    } else if (planPills.parentElement !== headerActions) {
+      headerActions.prepend(planPills);
+    }
     // Both pills: the right side tightens so it still clears the screen edge.
     headerActions.classList.toggle("both-plans", claudeOn && codexOn);
     if (claudeOn) claudePill.sync();
@@ -440,6 +446,8 @@ function buildOverview(actions: ViewActions): ViewHost {
       }
       // Spotify's lyrics view takes the right card's room.
       el.classList.toggle("lyrics-wide", mode === "spotify" && spotifyCard.wide());
+      el.dataset.avatar = String((mode === "card" && !detailOpen) || mode === "ticker" || mode === "plan");
+      el.dataset.detail = String(detailOpen || mode === "diff" || mode === "mail" || mode === "whatsapp");
       // Another pill, or the island closed: Spotify opens with the lyrics again.
       if (mode !== "spotify") setLyricsBack(false);
 
@@ -453,6 +461,7 @@ function buildOverview(actions: ViewActions): ViewHost {
       shownSelection = State.cardSelection;
 
       const others = State.otherTasks.slice(0, 4);
+      el.classList.toggle("no-other-pills", others.length === 0);
       const pillKey = others.map((t) => `${t.id}:${t.color}:${t.pillBadge ?? ""}`).join("|");
       if (pillKey !== pillIds) {
         pillIds = pillKey;

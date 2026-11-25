@@ -1183,6 +1183,28 @@ fn extract_n8n_workflow_name(json: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+pub fn n8n_base(raw: &str) -> Result<reqwest::Url, String> {
+    let error = || crate::i18n::t("Use HTTPS for n8n, or HTTP on this computer only.");
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| error())?;
+    if url.host_str().is_none() || !url.username().is_empty() || url.password().is_some()
+        || url.query().is_some() || url.fragment().is_some()
+        || !(url.scheme() == "https" || url.scheme() == "http" && crate::net::is_loopback_url(&url))
+    {
+        return Err(error());
+    }
+    Ok(url)
+}
+
+#[cfg(test)]
+#[test]
+fn n8n_requires_https_off_loopback_and_preserves_base_paths() {
+    assert_eq!(n8n_base(" https://n8n.example.com/work/ ").unwrap().as_str(), "https://n8n.example.com/work/");
+    assert_eq!(n8n_base("http://127.0.0.1:5678/").unwrap().as_str(), "http://127.0.0.1:5678/");
+    assert!(n8n_base("http://192.168.1.5:5678").is_err());
+    assert!(n8n_base("https://user:password@n8n.example.com/").is_err());
+    assert!(n8n_base("https://n8n.example.com/?x=y").is_err());
+}
+
 async fn poll_n8n(app: AppHandle) {
     if PAUSED.load(Ordering::Relaxed) || !enabled(&app, "integration_n8n") {
         return;
@@ -1190,8 +1212,19 @@ async fn poll_n8n(app: AppHandle) {
     let (Some(key), Some(raw_base)) = (secrets::get("n8n-api-key"), secrets::get("n8n-url")) else {
         return;
     };
-    let base = raw_base.trim_end_matches('/').to_string();
-    let http = client();
+    let Ok(base) = n8n_base(&raw_base) else {
+        emit(&app, IntegrationUpdate { id: "integration_n8n", data: json!({}),
+            error: Some(crate::i18n::t("Use HTTPS for n8n, or HTTP on this computer only.")), event: None });
+        return;
+    };
+    // Reqwest preserves custom headers on redirects, including X-N8N-API-KEY.
+    let mut builder = reqwest::Client::builder().timeout(TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none());
+    if crate::net::is_loopback_url(&base) {
+        builder = builder.no_proxy();
+    }
+    let Ok(http) = builder.build() else { return };
+    let base = base.as_str().trim_end_matches('/');
 
     // Same two shapes as the Swift poller: the public API first, then /rest.
     let list_urls = [

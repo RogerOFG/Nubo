@@ -1,3 +1,4 @@
+import type { IslandEdge } from "./dock";
 // Thin wrapper over the Tauri commands/events. Every call is a no-op when the
 // page is opened in a plain browser, so the island can be iterated on with
 // `npm run dev` alone.
@@ -230,6 +231,11 @@ export const Bridge = {
   focusWindow: (focused: boolean) => call<void>("focus_window", { focused }),
 
   reposition: () => call<void>("reposition"),
+  beginIslandMove: (x: number, y: number) => call<boolean>("begin_island_move", { x, y }),
+  centerIsland: (animate: boolean) => call<void>("center_island", { animate }),
+  cancelIslandMove: () => call<void>("cancel_island_move"),
+  setIslandPlacement: (placement: { screen?: string; edge?: IslandEdge; reset?: boolean }) =>
+    callOrThrow<void>("set_island_placement", placement),
   fitZoom: (dpr: number) => call<boolean>("fit_zoom", { dpr }),
 
   /** Displays the island can be pinned to: `key` is what `settings.screen` stores. */
@@ -258,8 +264,8 @@ export const Bridge = {
    * "Open terminal": the window the session runs in when Rust found it
    * (Windows; Linux on X11 and KDE Plasma), else the folder in VS Code.
    */
-  openSession: (sessionId: string | null, path: string | null) =>
-    call<boolean>("open_session", { sessionId, path }),
+  openSession: (sessionId: string | null, path: string | null, projectName: string | null) =>
+    call<boolean>("open_session", { sessionId, path, projectName }),
 
   /** The Claude desktop app, for the Claude Desktop pill (Windows only). */
   openClaudeDesktop: () => call<boolean>("open_claude_desktop"),

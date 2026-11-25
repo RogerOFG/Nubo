@@ -383,7 +383,25 @@ fn island_anchor(app: &AppHandle, d: &Desktop) -> Option<(f64, f64, f64)> {
     let pos = win.outer_position().ok()?;
     let size = win.outer_size().ok()?;
     let scale = win.scale_factor().unwrap_or(1.0);
+    if let Some(area) = docked_area(app) {
+        return Some((area.x + area.w / 2.0, area.y, scale));
+    }
     Some((pos.x as f64 + size.width as f64 / 2.0, pos.y as f64, scale))
+}
+
+fn docked_area(app: &AppHandle) -> Option<Rect> {
+    if island::placement(app).edge == crate::dock::Edge::Top { return None; }
+    let win = island::window(app)?;
+    let shared = app.try_state::<crate::Shared>()?;
+    let pos = win.outer_position().ok()?;
+    let scale = win.scale_factor().unwrap_or(1.0);
+    if shared.gate.collapsed.load(std::sync::atomic::Ordering::Relaxed) {
+        let size = win.inner_size().ok()?;
+        return Some(Rect { x: pos.x as f64, y: pos.y as f64, w: size.width as f64, h: size.height as f64 });
+    }
+    let rect = *shared.gate.rect.lock().unwrap();
+    Some(Rect { x: pos.x as f64 + rect.x * scale, y: pos.y as f64 + rect.y * scale,
+        w: rect.w * scale, h: rect.h * scale })
 }
 
 /// The window side in the mode's space.
@@ -602,9 +620,10 @@ fn target_spot(app: &AppHandle, d: &Desktop, anywhere: bool) -> Option<(f64, f64
 async fn finish_drop(app: &AppHandle, d: &Desktop, pos: (f64, f64), from: Source) {
     let s = side(app, d);
     let center = (pos.0 + s / 2.0, pos.1 + s / 2.0);
-    let home = island_anchor(app, d)
-        .map(|(cx, top, scale)| logic::home_zone(cx, top, scale).contains(center))
-        .unwrap_or(false);
+    let area = docked_area(app).or_else(|| {
+        island_anchor(app, d).map(|(cx, top, scale)| logic::home_zone(cx, top, scale))
+    });
+    let home = area.is_some_and(|rect| rect.contains(center));
     {
         let mut i = d.inner.lock().unwrap();
         i.carry = None;

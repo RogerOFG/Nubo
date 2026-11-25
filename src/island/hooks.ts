@@ -16,6 +16,7 @@ import { parseClaudePlan, restorePlanUsage } from "../core/plan";
 import { setClaudePlanUsage, storedClaudePlanUsage } from "../views/usage";
 import { N_, t } from "../i18n/i18n";
 import { Launch } from "../core/launch";
+import { SPOTIFY_ID } from "../core/spotify";
 
 const CLAUDE_ID = "integration_claude";
 const CURSOR_ID = "agent_cursor";
@@ -574,6 +575,9 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = promptStep(payload.prompt ?? payload.message ?? "");
       if (asked) State.appendStep(agentId, asked);
+      if (State.focusTask?.id === SPOTIFY_ID && !island.isLyricsPinned && !State.pendingApproval) {
+        State.setFocus(agentId);
+      }
       // A new turn: the finished card would show the prompt as if it were the answer.
       if (State.mode === "expanded" && State.view === "finished" && State.focusId === agentId) island.setView("overview");
       surface("overview", false);
@@ -590,7 +594,8 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
         State.updateTask(agentId, "question");
         State.appendStep(agentId, stepLabel(tool, payload.tool_input ?? {}));
         Sound.play("question");
-        surface("overview", true);
+        if (State.focusTask?.id === SPOTIFY_ID && showsAlert(agentId, focused, true)) island.alert("overview");
+        else if (!State.pendingApproval) surface("overview", true);
       } else {
         State.updateTask(agentId, "working");
         State.appendStep(agentId, stepLabel(tool, payload.tool_input ?? {}));
@@ -629,15 +634,25 @@ function handleHook(island: Island, payload: HookPayload, settledCodexStop = fal
         State.updateTask(agentId, "ratelimit");
         Sound.play("rate");
       } else if (message.endsWith("?")) {
+        ensurePill();
         supersedeStop();
         State.updateTask(agentId, "question");
         State.appendStep(agentId, message);
+        if (State.focusTask?.id === SPOTIFY_ID && showsAlert(agentId, focused, true)) {
+          island.alert("overview");
+        }
       }
       break;
     }
 
     case "Stop": {
-      if (isCodex) ensurePill();
+      // The first event after Nubo restarts can be the answer from an already
+      // open Claude Code session. Route the card back to the session that sent it.
+      if (isCodex || (sessionId && cwd)) ensurePill();
+      else if (sessionId) {
+        const task = State.tasks.find((entry) => entry.id === agentId);
+        if (task) task.sessionId = sessionId;
+      }
       State.updateTask(agentId, "finished");
       // Claude Code puts the turn's answer in the Stop payload itself, so there is
       // no transcript to read (the relay does not even forward its path). Other

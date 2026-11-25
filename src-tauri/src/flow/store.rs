@@ -79,9 +79,22 @@ pub enum Edge {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SummaryEngine {
-    #[default]
+    #[serde(rename = "claude-auto")]
     Claude,
+    #[default]
+    #[serde(alias = "claude")]
     Off,
+}
+
+#[cfg(test)]
+#[test]
+fn automatic_cloud_summaries_require_the_new_explicit_choice() {
+    assert_eq!(Prefs::default().summary_engine, SummaryEngine::Off);
+    let saved = |engine| serde_json::from_value::<Prefs>(serde_json::json!({ "summaryEngine": engine }))
+        .unwrap().summary_engine;
+    assert_eq!(saved("claude"), SummaryEngine::Off);
+    assert_eq!(saved("off"), SummaryEngine::Off);
+    assert_eq!(saved("claude-auto"), SummaryEngine::Claude);
 }
 
 /// The preferences of dictation and of the window.
@@ -132,7 +145,7 @@ impl Default for Prefs {
             keep_days: 30,
             cleanup: false,
             default_style: Style::Natural,
-            summary_engine: SummaryEngine::Claude,
+            summary_engine: SummaryEngine::Off,
             open_at_launch: true,
             voice: false,
             mute_others: true,

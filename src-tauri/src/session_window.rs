@@ -160,7 +160,13 @@ pub fn folder_name(path: &str) -> &str {
 /// an old session is dropped once there are more than this many.
 pub(crate) const MAX_SESSIONS: usize = 64;
 
-static SESSIONS: Mutex<Vec<(String, Vec<u32>)>> = Mutex::new(Vec::new());
+struct SessionWindow {
+    id: String,
+    owners: Vec<u32>,
+    warp: bool,
+}
+
+static SESSIONS: Mutex<Vec<SessionWindow>> = Mutex::new(Vec::new());
 
 /// A session ID arrives in a hook payload: only what Claude Code sends (a
 /// UUID) is kept, at most 128 characters.
@@ -168,32 +174,38 @@ pub(crate) fn valid_session(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-pub fn remember(session: &str, mut owners: Vec<u32>) {
+pub fn remember(session: &str, mut owners: Vec<u32>, warp: bool) {
     if !valid_session(session) {
         return;
     }
     owners.truncate(MAX_DEPTH);
     let mut list = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
-    list.retain(|(s, _)| s != session);
-    list.push((session.to_string(), owners));
+    list.retain(|entry| entry.id != session);
+    list.push(SessionWindow { id: session.to_owned(), owners, warp });
     let excess = list.len().saturating_sub(MAX_SESSIONS);
     list.drain(..excess);
 }
 
-/// True once the session has been looked at, window found or not.
+/// Windows retries if an early hook failed to find a window.
 pub fn known(session: &str) -> bool {
     let list = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
-    list.iter().any(|(s, _)| s == session)
+    list.iter().any(|entry| entry.id == session && (!cfg!(windows) || !entry.owners.is_empty()))
 }
 
 /// The processes that may own the session's window, nearest first, if any.
 pub fn lookup(session: &str) -> Option<Vec<u32>> {
     let list = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
-    list.iter().find(|(s, _)| s == session).map(|(_, pids)| pids.clone()).filter(|pids| !pids.is_empty())
+    list.iter().find(|entry| entry.id == session && !entry.owners.is_empty()).map(|entry| entry.owners.clone())
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn is_warp(session: &str) -> bool {
+    let list = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
+    list.iter().any(|entry| entry.id == session && entry.warp)
 }
 
 pub fn forget(session: &str) {
-    SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(s, _)| s != session);
+    SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).retain(|entry| entry.id != session);
 }
 
 #[cfg(test)]
@@ -377,23 +389,30 @@ mod tests {
 
     #[test]
     fn sessions_are_remembered_by_id_and_only_plausible_ids_are_kept() {
-        remember("s-test-1", vec![42]);
-        remember("s-test-1", vec![43, 44]);
+        remember("s-test-1", vec![42], false);
+        remember("s-test-1", vec![43, 44], false);
         assert_eq!(lookup("s-test-1"), Some(vec![43, 44]));
-        remember("not a session/../x", vec![7]);
+        remember("not a session/../x", vec![7], false);
         assert!(!known("not a session/../x"));
         forget("s-test-1");
         assert!(!known("s-test-1"));
 
         // A session without a window is settled, with nothing to show.
-        remember("s-test-2", Vec::new());
-        assert!(known("s-test-2"));
+        remember("s-test-2", Vec::new(), false);
+        assert_eq!(known("s-test-2"), !cfg!(windows));
         assert_eq!(lookup("s-test-2"), None);
+        remember("s-test-2", Vec::new(), true);
+        assert!(is_warp("s-test-2"));
+        remember("s-test-2", vec![45], true);
+        assert!(known("s-test-2"));
+        assert_eq!(lookup("s-test-2"), Some(vec![45]));
+        forget("s-test-2");
+        assert!(!is_warp("s-test-2"));
         forget("s-test-2");
 
         // Only the latest sessions are kept. (One test: the list is shared.)
         for i in 0..(MAX_SESSIONS + 5) {
-            remember(&format!("s-cap-{i}"), vec![1]);
+            remember(&format!("s-cap-{i}"), vec![1], false);
         }
         assert!(!known("s-cap-0"));
         assert!(known(&format!("s-cap-{}", MAX_SESSIONS + 4)));

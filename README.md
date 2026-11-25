@@ -25,33 +25,37 @@ and holds music, lyrics, quick texts, tasks and notes.
 
 ## Install
 
-Download the installer from the [Releases](https://github.com/RogerOFG/Nubo/releases)
-page. It is **not code-signed**, so Windows shows "Windows protected your PC":
-choose *More info* → *Run anyway*. If **Smart App Control** is on, Windows
-blocks unsigned installers with no way round it.
+Download the installer from [Releases](https://github.com/RogerOFG/Nubo/releases).
+Windows releases may be unsigned. Windows can show an unknown publisher or
+block the installer depending on the computer's security settings. See
+[Windows release verification](SECURITY.md#windows-release-verification) to
+check the installer's SHA-256.
 
 ## Build
 
 You need Node.js, Rust (MSVC) and the Visual Studio *C++ build tools*.
 
 ```powershell
-npm install
-npm run tauri dev                      # run it
-npm run tauri build -- --bundles nsis  # make the installer
+npm ci
+npm run tauri -- dev
+npm run tauri -- build --bundles nsis -- --locked
 ```
 
 ## Updates
 
 The app asks `https://api.github.com/repos/RogerOFG/Nubo/releases` for tags
 named `windows-vX.Y.Z` with the installer attached as
-`Nubo-Windows-X.Y.Z-setup.exe` (the names `npm run pack` produces). Nothing
-else leaves your machine for this.
+`Nubo-Windows-X.Y.Z-setup.exe`. It checks the downloaded installer's SHA-256
+against GitHub's release digest before starting it.
 
 ## Privacy
 
 No telemetry and no account. Lyrics ask `lrclib.net` for the song's title and
-artist, only after you turn lyrics on. Quick texts, tasks and notes stay on
-your computer.
+artist, only after you turn lyrics on. Quick texts, tasks and meeting transcripts
+are stored on your computer. Notetaker transcribes locally. If you request a
+Claude summary or enable automatic Claude summaries, Nubo sends the transcript
+text to the configured Anthropic endpoint using your key. The meeting audio is
+not sent for summarization.
 
 ## License
 

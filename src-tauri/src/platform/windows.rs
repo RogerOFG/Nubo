@@ -37,7 +37,7 @@ use ::windows::Win32::System::Threading::{
 };
 use ::windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayoutList, MapVirtualKeyExW, ToUnicodeEx, HKL, MAPVK_VK_TO_VSC,
-    VK_CONTROL, VK_LBUTTON, VK_MENU, VK_SHIFT,
+    VK_CONTROL, VK_ESCAPE, VK_LBUTTON, VK_MENU, VK_SHIFT,
 };
 use ::windows::Win32::UI::Shell::{
     ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC,
@@ -352,6 +352,10 @@ pub fn cursor_physical() -> Option<(f64, f64)> {
 
 /// True while the left mouse button is held — the only signal we get that a
 /// drag might be in flight before it reaches the window.
+pub fn escape_down() -> bool {
+    unsafe { (GetAsyncKeyState(VK_ESCAPE.0 as i32) as u16 & 0x8000) != 0 }
+}
+
 pub fn left_button_down() -> bool {
     unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0 }
 }
@@ -588,9 +592,38 @@ pub fn first_with_window(pids: &[u32]) -> Option<u32> {
     pids.iter().copied().find(|pid| windows.iter().any(|(_, owner, _)| owner == pid))
 }
 
-/// What a session remembers: the ancestor that owns a window, or nothing.
-pub fn window_owners(ancestors: &[u32]) -> Vec<u32> {
-    first_with_window(ancestors).into_iter().collect()
+/// Keep Warp's owner even if its window was temporarily hidden when the hook ran.
+pub fn session_window_context(ancestors: &[u32], warp_hint: bool) -> (Vec<u32>, bool) {
+    let procs = process_table();
+    let warp = ancestors.iter().copied().find(|pid| {
+        procs.get(pid).is_some_and(|p| p.exe.eq_ignore_ascii_case("warp.exe"))
+    });
+    if warp_hint || warp.is_some() {
+        return (warp.into_iter().collect(), true);
+    }
+    (first_with_window(ancestors).into_iter().collect(), false)
+}
+
+/// When the short-lived relay exited before its ancestry could be read, use
+/// the project title or the sole existing Warp window.
+pub fn focus_warp_window(owners: &[u32], folder: &str, project: &str, allow_sole: bool) -> bool {
+    let procs = process_table();
+    let candidates: Vec<_> = top_windows().into_iter().filter(|(_, pid, _)| {
+        procs.get(pid).is_some_and(|p| p.exe.eq_ignore_ascii_case("warp.exe"))
+    }).collect();
+    let owned: Vec<_> = candidates.iter().filter(|(_, pid, _)| owners.contains(pid)).collect();
+    let candidates = if owned.is_empty() { candidates.iter().collect::<Vec<_>>() } else { owned };
+    let names = [folder, project].map(|name| name.trim().to_lowercase());
+    let mut named = candidates.iter().copied().filter(|(_, _, title)| {
+        let title = title.to_lowercase();
+        names.iter().any(|name| name.len() >= 3 && name != "session" && title.contains(name))
+    });
+    let target = match (named.next(), named.next(), candidates.as_slice()) {
+        (Some(window), None, _) => Some(window),
+        (None, None, [window]) if allow_sole => Some(*window),
+        _ => None,
+    };
+    target.is_some_and(|(hwnd, _, _)| bring_forward(*hwnd))
 }
 
 fn bring_forward(raw: isize) -> bool {

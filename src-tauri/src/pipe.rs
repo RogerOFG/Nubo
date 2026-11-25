@@ -251,11 +251,12 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         .to_string();
 
     if payload["nubo_agent"] == "codex" {
-        let session = payload["session_id"].as_str().unwrap_or("").to_owned();
-        let path = payload["transcript_path"].as_str().unwrap_or("").to_owned();
-        let guardian = tokio::task::spawn_blocking(move || crate::codex_plan::is_guardian(&path, &session))
-            .await.unwrap_or(false);
-        if guardian {
+        let (original, ignored) = tokio::task::spawn_blocking(move || {
+            let ignored = crate::codex_plan::ignore_hook(&payload);
+            (payload, ignored)
+        }).await.unwrap_or((Value::Null, true));
+        payload = original;
+        if ignored {
             pipe.finish();
             return;
         }
@@ -436,15 +437,20 @@ fn note_session_window(pipe: &impl Relay, payload: &Value, event: &str) {
         session_window::forget(session);
         return;
     }
-    if session_window::known(session) {
+    let warp = cfg!(windows) && payload["term_program"].as_str()
+        .is_some_and(|term| term.eq_ignore_ascii_case("WarpTerminal"));
+    if session_window::known(session) && (!warp || session_window::is_warp(session)) {
         return;
     }
-    let Some(relay) = pipe.client_pid() else { return };
-    let ancestors = crate::platform::process_ancestors(relay);
-    // No ancestors: the relay was already gone, so try again next time. Some,
-    // but none with a window (a classic console): settled, VS Code it is.
-    if !ancestors.is_empty() {
-        session_window::remember(session, crate::platform::window_owners(&ancestors));
+    let ancestors = pipe.client_pid().map(crate::platform::process_ancestors).unwrap_or_default();
+    #[cfg(windows)]
+    let (owners, warp) = crate::platform::session_window_context(
+        &ancestors, warp || session_window::is_warp(session),
+    );
+    #[cfg(not(windows))]
+    let owners = crate::platform::window_owners(&ancestors);
+    if warp || !ancestors.is_empty() {
+        session_window::remember(session, owners, warp);
     }
 }
 

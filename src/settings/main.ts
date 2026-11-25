@@ -11,6 +11,7 @@ import {
   recordPress, type Binding,
 } from "../core/shortcuts";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
+import type { IslandEdge } from "../core/dock";
 import { closedIsland } from "../core/closed";
 import type { UpdateStatus } from "../core/update";
 import { SOUND_NAMES } from "../core/sound";
@@ -26,11 +27,11 @@ import { agentsSection } from "./agents";
 import { phoneSection } from "./phone";
 import { whatsappSection } from "./whatsapp";
 import { WHATSAPP_ID } from "../core/whatsapp";
-import { updateRows, updatesListener } from "./updates";
+import { updatesSection, updatesListener } from "./updates";
 import { colorDot } from "./colors";
-import { renderDiff, statusDot } from "./parts";
+import { renderDiff, settingsCard, settingsField, statusDot } from "./parts";
 import {
-  LANGUAGES, N_, isRtl, onLanguageChange, resolveLanguage, setLanguage, systemLanguages, t, tn,
+  LANGUAGES, N_, isRtl, language, onLanguageChange, resolveLanguage, setLanguage, systemLanguages, t, tn,
 } from "../i18n/i18n";
 
 /** Where secrets.rs keeps the keys on this OS. */
@@ -59,10 +60,10 @@ function pickColor(next: Record<string, string>) {
 // ── Reusable bits ─────────────────────────────────────────────────────────────
 
 function toggle(on: boolean, onChange: (v: boolean) => void): HTMLElement {
-  const el = h("button", { class: on ? "switch on" : "switch", "aria-pressed": on });
+  const el = h("button", { class: on ? "switch on" : "switch", "aria-pressed": String(on) });
   el.addEventListener("click", () => {
     const next = !el.classList.contains("on");
-    el.classList.toggle("on", next);
+    setSwitch(el, next);
     onChange(next);
   });
   return el;
@@ -946,7 +947,9 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       }) as HTMLInputElement;
       const saveBtn = h("button", { text: t("Save") });
       const dotEl = statusDot(present[field.key] ?? false);
+      const feedback = field.key === "n8n-url" ? h("div", { class: "hint", role: "status" }) : null;
       saveBtn.addEventListener("click", async () => {
+        if (feedback) feedback.textContent = "";
         const value = input.value.trim();
         try {
           await Bridge.secretSet(field.key, value);
@@ -954,8 +957,9 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
           input.value = "";
           input.placeholder = value ? CHAT_STRINGS.stored : field.placeholder;
           dotEl.style.background = value ? "#22c55e" : "#f4505e";
-        } catch {
+        } catch (error) {
           dotEl.style.background = "#f5a524";
+          if (feedback) feedback.textContent = String(error);
         }
       });
       rows.append(
@@ -964,6 +968,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
           input, saveBtn, dotEl,
         ),
       );
+      if (feedback) rows.append(feedback);
     }
 
     if (def.hint) rows.append(h("div", { class: "hint", text: t(def.hint) }));
@@ -1026,8 +1031,17 @@ function generalSection(): HTMLElement {
     type: "range", min: "0", max: "0.2", step: "0.005",
     value: String(settings.soundVolume),
   }) as HTMLInputElement;
+  const volumeValue = h("output", { class: "general-value", "aria-hidden": "true" });
+  const syncVolumeValue = () => {
+    const percent = new Intl.NumberFormat(language(), { style: "percent" })
+      .format(Number(volume.value) / Number(volume.max));
+    volumeValue.textContent = percent;
+    volume.setAttribute("aria-valuetext", percent);
+  };
+  syncVolumeValue();
   volume.addEventListener("input", () => {
     settings.soundVolume = Number(volume.value);
+    syncVolumeValue();
     void save();
   });
 
@@ -1048,7 +1062,7 @@ function generalSection(): HTMLElement {
   const autoClose = h("input", {
     type: "number", min: "1", max: "120", step: "1",
     value: String(Math.round(settings.autoCloseInterval)),
-    style: "width:72px",
+    class: "general-seconds",
   }) as HTMLInputElement;
   autoClose.addEventListener("change", () => {
     settings.autoCloseInterval = Math.max(1, Math.min(120, Math.round(Number(autoClose.value || 15))));
@@ -1059,7 +1073,7 @@ function generalSection(): HTMLElement {
   // The closed island (core/closed.ts): what stays at the top of the screen.
   const closed = h("select", {}) as HTMLSelectElement;
   closed.append(
-    h("option", { value: "nubo", text: t("Nubo, as on a Mac without a notch") }),
+    h("option", { value: "nubo", text: "Nubo" }),
     h("option", { value: "time", text: t("The time") }),
     h("option", { value: "datetime", text: t("The date and the time") }),
     h("option", { value: "claude", text: t("Claude usage") }),
@@ -1109,20 +1123,47 @@ function generalSection(): HTMLElement {
       saved;
     if (!screen.value) screen.value = "primary";
   });
-  screen.addEventListener("change", () => {
-    settings.screen = screen.value;
-    void save();
-  });
+  const placementFeedback = h("span", { class: "hint", role: "status" });
+  const changePlacement = async (value: Parameters<typeof Bridge.setIslandPlacement>[0]) => {
+    placementFeedback.textContent = "";
+    placementFeedback.hidden = true;
+    try {
+      await Bridge.setIslandPlacement(value);
+    } catch (error) {
+      screen.value = settings.screen;
+      edge.value = settings.islandDock.edge;
+      placementFeedback.textContent = String(error);
+      placementFeedback.hidden = false;
+    }
+  };
+  screen.addEventListener("change", () => void changePlacement({ screen: screen.value }));
+
+  const edge = h("select", {});
+  edge.append(
+    h("option", { value: "top", text: t("Top edge") }),
+    h("option", { value: "bottom", text: t("Bottom") }),
+    h("option", { value: "left", text: t("Left") }),
+    h("option", { value: "right", text: t("Right") }),
+  );
+  edge.value = settings.islandDock.edge;
+  edge.addEventListener("change", () => void changePlacement({ edge: edge.value as IslandEdge }));
+  const windows = navigator.userAgent.includes("Windows");
+  placementFeedback.hidden = true;
 
   const sound = toggle(settings.soundEnabled, (v) => { settings.soundEnabled = v; void save(); });
   const openOnHover = toggle(settings.openOnHover, (v) => { settings.openOnHover = v; void save(); });
   const autostart = toggle(settings.autostart, (v) => { settings.autostart = v; void save(); });
   generalSync = () => {
+    if (Array.from(screen.options).some((option) => option.value === settings.screen)) {
+      screen.value = settings.screen;
+    }
+    edge.value = settings.islandDock.edge;
     setSwitch(sound, settings.soundEnabled);
     setSwitch(openOnHover, settings.openOnHover);
     setSwitch(autostart, settings.autostart);
     // A field being edited keeps what is in it; it catches up when it is left.
     if (document.activeElement !== volume) volume.value = String(settings.soundVolume);
+    syncVolumeValue();
     if (document.activeElement !== autoClose) {
       autoClose.value = String(Math.round(settings.autoCloseInterval));
     }
@@ -1130,58 +1171,48 @@ function generalSection(): HTMLElement {
   volume.addEventListener("blur", () => generalSync?.());
   autoClose.addEventListener("blur", () => generalSync?.());
 
-  return h(
-    "section",
-    {},
-    h("h2", {}, h("span", { text: t("General") })),
-    h("div", { class: "row" },
-      h("label", { text: t("Sound") }),
-      sound,
-      volume,
+  return h("div", { class: "general-grid" },
+    settingsCard(t("Behavior"),
+      settingsField(t("Open on hover"), openOnHover,
+        t("Hovering the island opens it; it folds again shortly after the pointer leaves. Click inside to keep it open.")),
+      settingsField(t("Auto-close"), autoClose, t("Seconds before the open island closes after you leave it."),
+        h("span", { class: "general-value", "aria-hidden": "true", text: "s" })),
+      settingsField(t("Open for every pill’s alerts"),
+        toggle(settings.alertsFromAllPills, (v) => { settings.alertsFromAllPills = v; void save(); }),
+        t("When a pill other than the one shown finishes or hits an error, the notch shows it for a moment, then the pill you had comes back.")),
     ),
-    h("div", { class: "row" }, soundsFolder, reloadSounds, customCount),
-    h("div", { class: "hint", text: t("Drop a file named like one of Nubo's sounds (finish.wav, approval.mp3, greet.m4a…) in the sounds folder to replace it, then Reload.") }),
-    h("div", { class: "row" },
-      h("label", { text: t("Open on hover") }),
-      openOnHover,
+    settingsCard(t("Display"),
+      settingsField(t("Island lives on"), screen),
+      ...(windows ? [
+        settingsField(t("Island position"), edge),
+        h("div", { class: "general-actions dock-settings" },
+          h("button", { text: t("Reset island position"), onclick: () => void changePlacement({ reset: true }) }),
+        ),
+      ] : []),
+      placementFeedback,
+      settingsField(t("Closed island shows"), closed,
+        t("If you hide the island, move the pointer to its usual position along the screen edge to bring it back.")),
+      settingsField(t("Show clock in the island"),
+        toggle(settings.showClock, (v) => { settings.showClock = v; void save(); }),
+        t("The date and the time in the middle of the island when it is compact.")),
     ),
-    h("div", { class: "hint", text: t("Hovering the island opens it; it folds again shortly after the pointer leaves. Click inside to keep it open.") }),
-    h("div", { class: "row" },
-      h("label", { text: t("Open for every pill’s alerts") }),
-      toggle(settings.alertsFromAllPills, (v) => { settings.alertsFromAllPills = v; void save(); }),
+    settingsCard(t("Sound"),
+      settingsField(t("Sound effects"), sound),
+      settingsField(t("Volume"), volume, undefined, volumeValue),
+      h("details", { class: "general-details" },
+        h("summary", { text: t("Custom sounds") }),
+        h("p", { class: "hint", text: t("Drop a file named like one of Nubo's sounds (finish.wav, approval.mp3, greet.m4a…) in the sounds folder to replace it, then Reload.") }),
+        h("div", { class: "general-actions" }, soundsFolder, reloadSounds, customCount),
+      ),
     ),
-    h("div", { class: "hint", text: t("When a pill other than the one shown finishes or hits an error, the notch shows it for a moment, then the pill you had comes back.") }),
-    h("div", { class: "row" },
-      h("label", { text: t("Show clock in the island") }),
-      toggle(settings.showClock, (v) => { settings.showClock = v; void save(); }),
+    settingsCard(t("System"),
+      settingsField(t("Terminal for new sessions"), terminalPick,
+        t("Applies when Nubo starts Claude Code. Automatic uses Windows Terminal if available, then PowerShell.")),
+      settingsField(t("Launch at startup"), autostart),
+      languageRow(),
     ),
-    h("div", { class: "hint", text: t("The date and the time in the middle of the island when it is compact.") }),
-    h("div", { class: "row" },
-      h("label", { text: t("Closed island shows") }),
-      closed,
-    ),
-    h("div", { class: "hint", text: t("A PC has no notch: once closed, a small island stays at the top of the screen. Hover it to bring Nubo back. Hidden, move the pointer to the very top of the screen.") }),
-    h("div", { class: "row" },
-      h("label", { text: t("Terminal for new sessions") }),
-      terminalPick,
-    ),
-    h("div", { class: "hint", text: t("Where “New Claude Code session” opens. Automatic uses Windows Terminal when it is installed, else PowerShell. Warp opens through its launch configurations and may not work in every version.") }),
-    h("div", { class: "row" },
-      h("label", { text: t("Auto-close") }),
-      autoClose,
-      h("span", { class: "hint", text: t("seconds after you leave the island") }),
-    ),
-    h("div", { class: "row" },
-      h("label", { text: t("Island lives on") }),
-      screen,
-    ),
-    h("div", { class: "row" },
-      h("label", { text: t("Launch at startup") }),
-      autostart,
-    ),
-    ...recapRows(),
-    ...updateRows(toggle, version),
-    languageRow(),
+    updatesSection(toggle, version),
+    recapSection(),
   );
 }
 
@@ -1200,7 +1231,7 @@ function languageRow(): HTMLElement {
     void save();
     applyLanguage();
   });
-  return h("div", { class: "row" }, h("label", { text: t("Language") }), select);
+  return settingsField(t("Language"), select);
 }
 
 // ── Shortcuts section ─────────────────────────────────────────────────────────
@@ -1419,7 +1450,7 @@ function shortcutsSection(initial: ShortcutsReport | null): HTMLElement {
 }
 
 /** Settings → General → Weekly recap. The prefs live with the history in Rust. */
-function recapRows(): HTMLElement[] {
+function recapSection(): HTMLElement {
   const T = {
     label: t("Weekly recap"),
     keep: t("Keep a history of my coding sessions"),
@@ -1430,7 +1461,7 @@ function recapRows(): HTMLElement[] {
   const feedback = h("span", { class: "hint" });
   const sw = toggle(true, (v) => { void Bridge.recapSetEnabled(v); });
   void Bridge.recapPrefs().then((prefs) => {
-    if (prefs) sw.classList.toggle("on", prefs.enabled);
+    if (prefs) setSwitch(sw, prefs.enabled);
   });
   const clearBtn = h("button", {
     class: "danger",
@@ -1445,22 +1476,10 @@ function recapRows(): HTMLElement[] {
       }, 2400);
     },
   }) as HTMLButtonElement;
-  return [
-    h("div", { class: "row" },
-      h("label", { text: T.label }),
-      sw,
-      h("span", { class: "hint", text: T.keep }),
-    ),
-    h("div", { class: "row" },
-      h("label", {}),
-      clearBtn,
-      feedback,
-    ),
-    h("div", { class: "row" },
-      h("label", {}),
-      h("span", { class: "hint", style: "flex:1 1 0;min-width:0", text: T.about }),
-    ),
-  ];
+  return settingsCard(T.label,
+    settingsField(T.keep, sw, T.about),
+    h("div", { class: "general-actions" }, clearBtn, feedback),
+  );
 }
 
 // ── Language ──────────────────────────────────────────────────────────────────

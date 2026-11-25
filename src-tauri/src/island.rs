@@ -12,11 +12,14 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow};
 
+use crate::dock::{Dock, Edge, WorkArea};
 use crate::platform::{self, cursor_physical, left_button_down};
 
 /// Logical size of the full window — the largest island view, like the macOS panel.
 pub const PANEL_W: f64 = 720.0;
 pub const PANEL_H: f64 = 320.0;
+pub const SIDE_PANEL_W: f64 = 390.0;
+pub const SIDE_PANEL_H: f64 = 680.0;
 /// Logical size of the invisible strip that wakes the island when it is hidden
 /// and the closed island is set to show nothing.
 pub const STRIP_W: f64 = 240.0;
@@ -78,6 +81,10 @@ pub struct PollGate {
     pub rect: Mutex<IslandRect>,
     /// Mirrors the window flag so we only call into the OS when it changes.
     ignoring: AtomicBool,
+    #[cfg(windows)]
+    moving: Mutex<Option<IslandMove>>,
+    #[cfg(windows)]
+    centering: Mutex<Option<CenterMove>>,
 }
 
 impl PollGate {
@@ -89,7 +96,18 @@ impl PollGate {
             collapsed_size: Mutex::new((STRIP_W, STRIP_H)),
             rect: Mutex::new(IslandRect::default()),
             ignoring: AtomicBool::new(false),
+            #[cfg(windows)]
+            moving: Mutex::new(None),
+            #[cfg(windows)]
+            centering: Mutex::new(None),
         }
+    }
+
+    pub fn is_moving(&self) -> bool {
+        #[cfg(windows)]
+        { self.moving.lock().unwrap().is_some() || self.centering.lock().unwrap().is_some() }
+        #[cfg(not(windows))]
+        { false }
     }
 
     pub fn set_rect(&self, rect: IslandRect) {
@@ -361,10 +379,11 @@ mod zoom_tests {
 
     #[test]
     fn a_closed_island_stays_inside_the_panel() {
-        assert_eq!(clamp_collapsed((160.0, 26.0)), (160.0, 26.0));
-        assert_eq!(clamp_collapsed((5000.0, 900.0)), (PANEL_W, PANEL_H));
-        assert_eq!(clamp_collapsed((0.0, -3.0)), (1.0, 1.0));
-        assert_eq!(clamp_collapsed((f64::NAN, 26.0)), (PANEL_W, 26.0));
+        assert_eq!(clamp_collapsed((160.0, 26.0), Edge::Top), (160.0, 26.0));
+        assert_eq!(clamp_collapsed((5000.0, 900.0), Edge::Top), (PANEL_W, PANEL_H));
+        assert_eq!(clamp_collapsed((5000.0, 900.0), Edge::Right), (SIDE_PANEL_W, SIDE_PANEL_H));
+        assert_eq!(clamp_collapsed((0.0, -3.0), Edge::Top), (1.0, 1.0));
+        assert_eq!(clamp_collapsed((f64::NAN, 26.0), Edge::Top), (PANEL_W, 26.0));
     }
 
     #[test]
@@ -375,16 +394,6 @@ mod zoom_tests {
         assert_eq!(calculate_zoom_correction(1.0, 1.0, f64::INFINITY), None);
     }
 
-    #[test]
-    fn a_top_taskbar_moves_the_island_down_and_nothing_else_does() {
-        // Taskbar at the bottom (or none): the work area starts at the top.
-        assert_eq!(top_inset_from(0, 0), 0);
-        // A 48 px taskbar at the top of a display placed at y = -1080.
-        assert_eq!(top_inset_from(-1080, -1032), 48);
-        // Nonsense from the system never pushes the island off the display.
-        assert_eq!(top_inset_from(0, -20), 0);
-        assert_eq!(top_inset_from(0, 900), 0);
-    }
 }
 
 
@@ -406,23 +415,35 @@ pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
     }
 }
 
-/// Places and sizes the window: the full panel, or `collapsed` to the size the
-/// closed island needs (the wake strip when it shows nothing).
-/// Windows: how far a taskbar docked at the top of this display (or another
-/// app bar there) pushes the island down, read from the display's work area,
-/// so the island sits under it (#956). An auto-hidden taskbar takes no work
-/// area and moves nothing. Linux anchors the island to the screen edge: 0.
-fn top_inset(m: &tauri::Monitor) -> i32 {
-    if cfg!(windows) {
-        top_inset_from(m.position().y, m.work_area().position.y)
-    } else {
-        0
-    }
+pub fn placement(app: &AppHandle) -> Dock {
+    if !cfg!(windows) { return Dock::default(); }
+    app.try_state::<crate::Shared>().map(|state| state.settings.lock().unwrap().island_dock).unwrap_or_default()
 }
 
-fn top_inset_from(monitor_y: i32, work_y: i32) -> i32 {
-    let inset = work_y - monitor_y;
-    if (0..200).contains(&inset) { inset } else { 0 }
+fn work_area(m: &Monitor) -> WorkArea {
+    let (position, size) = (m.position(), m.size());
+    if cfg!(windows) {
+        let work = m.work_area();
+        if work.size.width > 0 && work.size.height > 0 {
+            return WorkArea { x: work.position.x, y: work.position.y, w: work.size.width, h: work.size.height };
+        }
+    }
+    WorkArea { x: position.x, y: position.y, w: size.width, h: size.height }
+}
+
+#[derive(Clone, Serialize)]
+struct IslandFrame {
+    edge: Edge,
+    /// Desired anchor in window-local logical pixels.
+    anchor: f64,
+}
+
+fn anchor_in_window(work: WorkArea, dock: Dock, x: i32, y: i32, scale: f64) -> f64 {
+    if dock.edge.lateral() {
+        (f64::from(work.y - y) + f64::from(work.h) * dock.offset()) / scale
+    } else {
+        (f64::from(work.x - x) + f64::from(work.w) * dock.offset()) / scale
+    }
 }
 
 pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: Option<(f64, f64)>) {
@@ -430,14 +451,14 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: Option<(f64, f64)>
     let Some(m) = target_monitor(app, pref) else { return };
 
     let scale = m.scale_factor();
-    let mp = *m.position();
     let ms = *m.size();
-
-    let (lw, lh) = collapsed.map(clamp_collapsed).unwrap_or((PANEL_W, PANEL_H));
-    let pw = (lw * scale).round().max(1.0) as u32;
-    let ph = (lh * scale).round().max(1.0) as u32;
-    let x = mp.x + (ms.width as i32 - pw as i32) / 2;
-    let y = mp.y + top_inset(&m);
+    let dock = placement(app);
+    let work = work_area(&m);
+    let (lw, lh) = collapsed.map(|size| clamp_collapsed(size, dock.edge)).unwrap_or_else(|| panel_size(dock.edge));
+    let pw = (lw * scale).round().clamp(1.0, f64::from(work.w.max(1))) as u32;
+    let ph = (lh * scale).round().clamp(1.0, f64::from(work.h.max(1))) as u32;
+    let (x, y) = work.place(dock, pw, ph);
+    let anchor = anchor_in_window(work, dock, x, y, scale);
 
     // GTK never sizes a non-resizable window below its natural size (200 px
     // here), so on Linux the 6 px wake strip would stay a 200 px block. tao
@@ -466,26 +487,43 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: Option<(f64, f64)>
             let _ = win.set_position(PhysicalPosition::new(x, y));
         }
     }
+    let _ = win.emit("island-frame", IslandFrame { edge: dock.edge, anchor });
 }
 
 /// A closed island never grows past the panel, and never shrinks below one
 /// pixel (a zero-sized window can't be placed).
-pub fn clamp_collapsed((w, h): (f64, f64)) -> (f64, f64) {
+pub fn clamp_collapsed((w, h): (f64, f64), edge: Edge) -> (f64, f64) {
     let ok = |v: f64, max: f64| if v.is_finite() { v.clamp(1.0, max) } else { max };
-    (ok(w, PANEL_W), ok(h, PANEL_H))
+    let (max_w, max_h) = panel_size(edge);
+    (ok(w, max_w), ok(h, max_h))
+}
+
+fn panel_size(edge: Edge) -> (f64, f64) {
+    if edge.lateral() { (SIDE_PANEL_W, SIDE_PANEL_H) } else { (PANEL_W, PANEL_H) }
 }
 
 /// Position, size and scale of the monitor the island lives on. Any change here
 /// means the island has to be placed again.
-fn current_screen_key(app: &AppHandle) -> Option<(i32, i32, u32, u32, u64)> {
+fn current_screen_key(app: &AppHandle) -> Option<ScreenKey> {
     let pref = app
         .try_state::<crate::Shared>()
         .map(|s| s.settings.lock().unwrap().screen.clone())
         .unwrap_or_else(|| "primary".into());
     let m = target_monitor(app, &pref)?;
-    let p = m.position();
     let size = m.size();
-    Some((p.x, p.y + top_inset(&m), size.width, size.height, m.scale_factor().to_bits()))
+    let work = work_area(&m);
+    Some((work.x, work.y, work.w, work.h, size.width, size.height, m.scale_factor().to_bits()))
+}
+
+type ScreenKey = (i32, i32, u32, u32, u32, u32, u64);
+
+fn watch_screen(app: &AppHandle, last: &mut Option<ScreenKey>) {
+    if let Some(now) = current_screen_key(app) {
+        if last.replace(now).is_some_and(|previous| previous != now) {
+            crate::log::line("display layout changed — repositioning");
+            let _ = app.emit_to(WINDOW_LABEL, "screen-changed", ());
+        }
+    }
 }
 
 /// Emits `cursor` (window-logical coordinates) at ~60 Hz while the island is
@@ -495,7 +533,7 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
         let mut was_down = false;
         // Remembered across wakes so a display change while hidden is noticed the
         // moment the island comes back.
-        let mut last_screen: Option<(i32, i32, u32, u32, u64)> = None;
+        let mut last_screen = None;
         // Without a cursor to read (Linux) the loop only watches the display
         // layout, and twice a second is plenty for that: waking at 60 Hz just to
         // find no cursor costs CPU for nothing.
@@ -504,12 +542,17 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
             // Parked. Folded on Windows, a glance at the cursor four times a
             // second: on the closed island, it is told to wake up, whether or
             // not the webview delivers the pointer to such a small window.
+            let mut parked_ticks: u8 = 0;
             loop {
                 if gate.wait_active_for(Duration::from_millis(250)) {
                     break;
                 }
                 if platform::CURSOR_POLL && gate.collapsed.load(Ordering::Relaxed) {
                     wake_if_hovered(&app, &gate);
+                    parked_ticks = parked_ticks.wrapping_add(1);
+                    if parked_ticks % 4 == 0 {
+                        watch_screen(&app, &mut last_screen);
+                    }
                 }
             }
             let mut last = (f64::MIN, f64::MIN);
@@ -527,16 +570,14 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                 // nobody can reach. Checked about twice a second — the cursor poll
                 // is already running, so this costs one monitor query.
                 ticks = ticks.wrapping_add(1);
+                #[cfg(windows)]
+                if move_tick(&app, &gate) || center_tick(&app, &gate) {
+                    last = (f64::MIN, f64::MIN);
+                    far = false;
+                    continue;
+                }
                 if ticks % screen_every == 0 {
-                    let now = current_screen_key(&app);
-                    if now.is_some() && now != last_screen {
-                        let first = last_screen.is_none();
-                        last_screen = now;
-                        if !first {
-                            crate::log::line("display layout changed — repositioning".to_string());
-                            let _ = app.emit_to(WINDOW_LABEL, "screen-changed", ());
-                        }
-                    }
+                    watch_screen(&app, &mut last_screen);
                 }
 
                 let Some(win) = window(&app) else { continue };
@@ -627,7 +668,7 @@ pub fn refresh_click_through(app: &AppHandle, gate: &PollGate) {
         // The closed island (or the wake strip) itself, never "the whole
         // window": if the window ever fails to shrink, the rest of it must not
         // swallow clicks meant for whatever sits under the top of the screen.
-        let (w, h) = clamp_collapsed(*gate.collapsed_size.lock().unwrap());
+        let (w, h) = clamp_collapsed(*gate.collapsed_size.lock().unwrap(), placement(app).edge);
         Some((0.0, 0.0, w, h))
     } else {
         let r = *gate.rect.lock().unwrap();
@@ -649,4 +690,262 @@ pub fn set_ignore_cursor(app: &AppHandle, ignore: bool) {
     if let Some(win) = window(app) {
         platform::set_click_through(&win, ignore);
     }
+}
+
+fn restore_geometry(app: &AppHandle, shared: &crate::Shared) {
+    let screen = shared.settings.lock().unwrap().screen.clone();
+    let closed = shared.gate.collapsed.load(Ordering::Relaxed);
+    let size = *shared.gate.collapsed_size.lock().unwrap();
+    apply_geometry(app, &screen, closed.then_some(size));
+    refresh_click_through(app, &shared.gate);
+}
+
+fn save_placement(app: &AppHandle, screen: Option<String>, dock: Option<Dock>) -> Result<(), String> {
+    let Some(shared) = app.try_state::<crate::Shared>() else { return Ok(()) };
+    let next = {
+        let mut settings = shared.settings.lock().unwrap();
+        let mut next = settings.clone();
+        if let Some(screen) = screen { next.screen = screen; }
+        if let Some(dock) = dock { next.island_dock = dock; }
+        crate::settings::save(&next).map_err(|error| error.to_string())?;
+        *settings = next.clone();
+        next
+    };
+    restore_geometry(app, &shared);
+    let _ = app.emit("settings-changed", next);
+    Ok(())
+}
+
+pub fn reset_placement(app: &AppHandle) {
+    cancel_move(app);
+    if let Err(error) = save_placement(app, Some("primary".into()), Some(Dock::default())) {
+        crate::log::line(format!("island position: {error}"));
+    }
+}
+
+#[tauri::command]
+pub fn set_island_placement(app: AppHandle, screen: Option<String>, edge: Option<Edge>, reset: Option<bool>) -> Result<(), String> {
+    cancel_move(&app);
+    if reset == Some(true) {
+        return save_placement(&app, Some("primary".into()), Some(Dock::default()));
+    }
+    if let Some(pref) = screen.as_deref() {
+        if !matches!(pref, "primary" | "cursor") && !monitor_choices(&app).iter().any(|choice| choice.key == pref) {
+            return Err(crate::i18n::t("Display not found."));
+        }
+    }
+    let dock = edge.filter(|_| cfg!(windows)).map(|edge| Dock { edge, ..Dock::default() });
+    save_placement(&app, screen, dock)
+}
+
+#[cfg(windows)]
+struct CenterMove {
+    dock: Dock,
+    work: WorkArea,
+    size: PhysicalSize<u32>,
+    scale: f64,
+    started: std::time::Instant,
+}
+
+#[tauri::command]
+pub fn center_island(app: AppHandle, win: WebviewWindow, animate: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let Some(shared) = app.try_state::<crate::Shared>() else { return Ok(()) };
+        if win.label() != WINDOW_LABEL || !shared.gate.is_active()
+            || shared.gate.centering.lock().unwrap().is_some() { return Ok(()); }
+        let dock = placement(&app);
+        if (dock.offset() - 0.5).abs() < 0.001 { return Ok(()); }
+        cancel_move(&app);
+        if animate {
+            if let (Ok(Some(monitor)), Ok(size)) = (win.current_monitor(), win.inner_size()) {
+                *shared.gate.centering.lock().unwrap() = Some(CenterMove {
+                    dock, work: work_area(&monitor), size, scale: monitor.scale_factor(),
+                    started: std::time::Instant::now(),
+                });
+                return Ok(());
+            }
+        }
+        return save_placement(&app, None, Some(dock.toward_center(1.0)));
+    }
+    #[cfg(not(windows))]
+    { let _ = (app, win, animate); Ok(()) }
+}
+
+#[cfg(windows)]
+fn center_tick(app: &AppHandle, gate: &PollGate) -> bool {
+    let mut active = gate.centering.lock().unwrap();
+    let Some(motion) = active.as_ref() else { return false };
+    let progress = motion.started.elapsed().as_secs_f64() / 0.32;
+    let dock = motion.dock.toward_center(progress);
+    if progress < 1.0 {
+        if let Some(win) = window(app) {
+            let (x, y) = motion.work.place(dock, motion.size.width, motion.size.height);
+            let anchor = anchor_in_window(motion.work, dock, x, y, motion.scale);
+            let _ = win.set_position(PhysicalPosition::new(x, y));
+            let _ = win.emit("island-frame", IslandFrame { edge: dock.edge, anchor });
+        }
+        return true;
+    }
+    *active = None;
+    drop(active);
+    if let Err(error) = save_placement(app, None, Some(dock)) {
+        crate::log::line(format!("island position: {error}"));
+        if let Some(shared) = app.try_state::<crate::Shared>() { restore_geometry(app, &shared); }
+    }
+    true
+}
+
+#[cfg(windows)]
+struct IslandMove {
+    start: (f64, f64),
+    grab: (f64, f64),
+    surface: IslandRect,
+    scale: f64,
+    moved: bool,
+    edge: Option<Edge>,
+    pull: f64,
+    last_cursor: (f64, f64),
+    monitors: Vec<Monitor>,
+    checked_at: std::time::Instant,
+}
+
+#[cfg(windows)]
+impl IslandMove {
+    fn surface_at(&self, cursor: (f64, f64), scale: f64) -> (f64, f64) {
+        (cursor.0 + (self.surface.x - self.grab.0) * scale,
+         cursor.1 + (self.surface.y - self.grab.1) * scale)
+    }
+
+    fn size_at(&self, scale: f64) -> (f64, f64) {
+        (self.surface.w * scale, self.surface.h * scale)
+    }
+}
+
+#[tauri::command]
+pub fn begin_island_move(win: WebviewWindow, shared: tauri::State<'_, crate::Shared>, x: f64, y: f64) -> bool {
+    #[cfg(windows)]
+    {
+        if win.label() != WINDOW_LABEL || !shared.gate.is_active() || !left_button_down()
+            || shared.gate.centering.lock().unwrap().is_some() {
+            return false;
+        }
+        let Ok(origin) = win.outer_position() else { return false };
+        let scale = win.scale_factor().unwrap_or(1.0);
+        let Some(start) = cursor_physical() else { return false };
+        let grab = ((start.0 - f64::from(origin.x)) / scale, (start.1 - f64::from(origin.y)) / scale);
+        let rect = *shared.gate.rect.lock().unwrap();
+        if !x.is_finite() || !y.is_finite() || x < rect.x || x > rect.x + rect.w
+            || y < rect.y || y > rect.y + rect.h
+        {
+            return false;
+        }
+        let edge = shared.settings.lock().unwrap().island_dock.edge;
+        let mut active = shared.gate.moving.lock().unwrap();
+        if active.is_some() { return false; }
+        *active = Some(IslandMove { start, grab, surface: rect, scale, moved: false, edge: Some(edge), pull: 1.0,
+            last_cursor: start, monitors: win.available_monitors().unwrap_or_default(),
+            checked_at: std::time::Instant::now() });
+        return true;
+    }
+    #[cfg(not(windows))]
+    { let _ = (win, shared, x, y); false }
+}
+
+pub fn cancel_move(app: &AppHandle) {
+    #[cfg(windows)]
+    if let Some(shared) = app.try_state::<crate::Shared>() {
+        let moving = shared.gate.moving.lock().unwrap().take().is_some();
+        let centering = shared.gate.centering.lock().unwrap().take().is_some();
+        if moving || centering {
+            restore_geometry(app, &shared);
+        }
+        if moving {
+            let _ = app.emit_to(WINDOW_LABEL, "island-move-end", false);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = app;
+}
+
+#[tauri::command]
+pub fn cancel_island_move(app: AppHandle) {
+    cancel_move(&app);
+}
+
+#[cfg(windows)]
+fn move_tick(app: &AppHandle, gate: &PollGate) -> bool {
+    let mut state = gate.moving.lock().unwrap();
+    let Some(drag) = state.as_mut() else { return false };
+    let cursor = cursor_physical();
+    let released = !left_button_down();
+    let cancelled = platform::escape_down();
+    if released || cancelled || cursor.is_none() {
+        let drag = state.take().unwrap();
+        drop(state);
+        let passed_threshold = cursor.is_some_and(|(x, y)| {
+            (x - drag.start.0).hypot(y - drag.start.1) >= 6.0 * drag.scale
+        });
+        let moved = drag.moved || passed_threshold;
+        let clicked = released && !cancelled && cursor.is_some() && !moved;
+        let target = cursor.filter(|_| moved && !cancelled).and_then(|(x, y)| {
+            let monitor = app.available_monitors().ok()?.into_iter().find(|m| monitor_contains(m, x, y))?;
+            let scale = monitor.scale_factor();
+            work_area(&monitor).magnet(drag.surface_at((x, y), scale), drag.size_at(scale), scale, drag.edge)
+                .filter(|(_, strength)| *strength >= 0.8)
+                .map(|(dock, _)| (describe(&monitor).key(), dock))
+        });
+        if let Some((screen, dock)) = target {
+            if let Err(error) = save_placement(app, Some(screen), Some(dock)) {
+                crate::log::line(format!("island position: {error}"));
+                if let Some(shared) = app.try_state::<crate::Shared>() { restore_geometry(app, &shared); }
+            }
+        } else if drag.moved {
+            if let Some(shared) = app.try_state::<crate::Shared>() { restore_geometry(app, &shared); }
+        }
+        let _ = app.emit_to(WINDOW_LABEL, "island-move-end", clicked);
+        return true;
+    }
+
+    let Some(cursor) = cursor else { return true };
+    if !drag.moved {
+        let distance = (cursor.0 - drag.start.0).hypot(cursor.1 - drag.start.1);
+        if distance < 6.0 * drag.scale { return true; }
+        drag.moved = true;
+    }
+    if drag.last_cursor == cursor { return true; }
+    drag.last_cursor = cursor;
+    if drag.checked_at.elapsed() >= Duration::from_millis(160) {
+        if let Ok(monitors) = app.available_monitors() { drag.monitors = monitors; }
+        drag.checked_at = std::time::Instant::now();
+    }
+    let monitor = drag.monitors.iter().find(|m| monitor_contains(m, cursor.0, cursor.1));
+    let scale = monitor.map_or(drag.scale, Monitor::scale_factor);
+    let free = drag.surface_at(cursor, scale);
+    let size = drag.size_at(scale);
+    let snap = monitor.and_then(|m| {
+        let work = work_area(m);
+        work.magnet(free, size, scale, drag.edge).map(|(dock, strength)| (work, dock, strength))
+    });
+    if let Some(win) = window(app) {
+        let preview = snap.map(|(_, dock, strength)| (dock.edge, strength));
+        let edge = preview.map(|(edge, _)| edge);
+        let pull = preview.map_or(0.0, |(_, pull)| pull);
+        if drag.edge != edge || (drag.pull - pull).abs() > 0.004 {
+            drag.edge = edge;
+            drag.pull = pull;
+            let _ = win.emit("island-move-preview", preview);
+        }
+        let position = match snap {
+            Some((work, dock, strength)) => {
+                let (x, y) = work.place(dock, size.0.round() as u32, size.1.round() as u32);
+                (free.0 + (f64::from(x) - free.0) * strength, free.1 + (f64::from(y) - free.1) * strength)
+            }
+            None => free,
+        };
+        let x = (position.0 - drag.surface.x * scale).round() as i32;
+        let y = (position.1 - drag.surface.y * scale).round() as i32;
+        let _ = win.set_position(PhysicalPosition::new(x, y));
+    }
+    true
 }

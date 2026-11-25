@@ -14,3 +14,23 @@ export function renderDiff(text: string): HTMLElement {
   }
   return box;
 }
+
+
+let fieldSequence = 0;
+
+/** Keeps each setting's explanation and accessible control name together. */
+export function settingsField(title: string, control: HTMLElement, detail?: string, unit?: HTMLElement): HTMLElement {
+  const id = `general-field-${++fieldSequence}`;
+  const name = h("span", { class: "general-field-name", id, text: title });
+  const description = detail ? h("p", { class: "hint", id: `${id}-detail`, text: detail }) : null;
+  control.setAttribute("aria-labelledby", id);
+  if (description) control.setAttribute("aria-describedby", description.id);
+  return h("div", { class: "general-field" },
+    h("div", { class: "general-field-copy" }, name, description),
+    h("div", { class: "general-control" }, control, unit),
+  );
+}
+
+export function settingsCard(title: string, ...children: HTMLElement[]): HTMLElement {
+  return h("section", { class: "general-card" }, h("h2", { text: title }), ...children);
+}

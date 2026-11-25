@@ -415,7 +415,7 @@ test("the terminal shortcut is the existing Open terminal (the session's window)
   State.tasks[0].sessionCwd = "C:\\work\\proj";
   State.mode = "expanded";
   runGlobalShortcut(host, "jumpToTerminal", resume);
-  assert.deepEqual(sent("open_session"), [{ sessionId: null, path: "C:\\work\\proj" }]);
+  assert.deepEqual(sent("open_session"), [{ sessionId: null, path: "C:\\work\\proj", projectName: "Claude Code" }]);
   assert.deepEqual(did, ["collapse"]);
 
   // A Claude Desktop session lives in the Claude app.

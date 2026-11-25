@@ -23,6 +23,7 @@ pub fn watch(app: tauri::AppHandle) {
     use windows::Win32::System::Power::{RegisterSuspendResumeNotification, DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS};
     use windows::Win32::UI::WindowsAndMessaging::DEVICE_NOTIFY_CALLBACK;
 
+    const PBT_APMSUSPEND: u32 = 0x0004;
     const PBT_APMRESUMESUSPEND: u32 = 0x0007;
     const PBT_APMRESUMEAUTOMATIC: u32 = 0x0012;
 
@@ -30,6 +31,12 @@ pub fn watch(app: tauri::AppHandle) {
     static LAST: AtomicI64 = AtomicI64::new(0);
 
     unsafe extern "system" fn on_power(_context: *const c_void, kind: u32, _setting: *const c_void) -> u32 {
+        if kind == PBT_APMSUSPEND {
+            if let Some(app) = APP.get().cloned() {
+                let _ = app.clone().run_on_main_thread(move || crate::island::cancel_move(&app));
+            }
+            return 0;
+        }
         if kind != PBT_APMRESUMESUSPEND && kind != PBT_APMRESUMEAUTOMATIC {
             return 0;
         }
@@ -40,6 +47,7 @@ pub fn watch(app: tauri::AppHandle) {
         }
         if let Some(app) = APP.get().cloned() {
             std::thread::spawn(move || {
+                crate::island::cancel_move(&app);
                 // Let the display come back first.
                 std::thread::sleep(Duration::from_secs(2));
                 crate::log::line("power: the PC woke up, the windows compose again and the pages reload");

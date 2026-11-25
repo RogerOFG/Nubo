@@ -3,6 +3,7 @@
 import "./style.css";
 import { Bridge, IS_TAURI, onEvent, reloadOnResume } from "./core/bridge";
 import { Sound } from "./core/sound";
+import type { IslandEdge } from "./core/dock";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
@@ -109,6 +110,11 @@ async function main() {
     const dpr = window.devicePixelRatio || 1;
     await Bridge.fitZoom(dpr);
   };
+
+  await onEvent<{ edge: IslandEdge; anchor: number }>("island-frame", (frame) => island.setDockFrame(frame));
+  await onEvent<[IslandEdge, number] | null>("island-move-preview", (preview) => island.previewDock(preview));
+  await onEvent<boolean>("island-move-end", (clicked) => island.finishDockMove(clicked));
+  void Bridge.reposition();
 
   await onEvent<null>("screen-changed", async () => {
     await checkZoom();
